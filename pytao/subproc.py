@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import dataclasses
 import io
 import logging
 import os
+import pathlib
 import pickle
 import queue
 import subprocess
@@ -225,6 +227,33 @@ def _get_result(value: SubprocessResult, raises: bool = True):
     raise RuntimeError(f"Unexpected pipe response: {value}")
 
 
+@contextlib.contextmanager
+def _temporary_fifo(mode: int = 0o600):
+    """
+    Create a temporary FIFO for pytao subprocess communication.
+
+    Parameters
+    ----------
+    mode : int, default=0o600
+        FIFO mode - defaults to read/write for the user only.
+
+    Yields
+    ------
+    pathlib.Path
+        The FIFO filename.
+    """
+    with tempfile.TemporaryDirectory(suffix="_pytao_subproc") as tempdir:
+        fifo_path = pathlib.Path(tempdir) / "fifo"
+        os.mkfifo(fifo_path, mode=mode)
+        try:
+            yield fifo_path
+        finally:
+            try:
+                fifo_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 class _TaoPipe:
     """
     Tao subprocess Pipe helper.
@@ -256,12 +285,9 @@ class _TaoPipe:
             pass
 
     def _tao_subprocess(self):
-        """Subprocess monitor thread.  Cleans up after the subprocess ends."""
-
-        with tempfile.TemporaryDirectory(suffix="_pytao_subproc") as tempdir:
-            fifo_path = os.path.join(tempdir, "fifo")
-            os.mkfifo(fifo_path, mode=0o600)
-            try:
+        initialized = False
+        try:
+            with _temporary_fifo() as fifo_path:
                 subproc = subprocess.Popen(
                     [
                         sys.executable,
@@ -271,26 +297,26 @@ class _TaoPipe:
                     ],
                     stdin=subprocess.PIPE,
                 )
-            except Exception as ex:
-                # Report the exception back to the main thread so it can be
-                # re-raised appropriately.
-                self._init_queue.put(ex)
-                raise
+                with open(fifo_path, "rb") as self._fifo:
+                    self._subproc = subproc
+                    self._init_queue.put(subproc)
+                    initialized = True
 
-            with open(fifo_path, "rb") as self._fifo:
-                self._subproc = subproc
-                self._init_queue.put(subproc)
-
-                assert subproc.stdin is not None
-                try:
+                    assert subproc.stdin is not None
                     code = subproc.wait()
                     if code != 0:
                         logger.warning(f"Subprocess exited with error code {code}")
                     else:
                         logger.debug("Subprocess exited without error")
-                finally:
-                    self._subprocess_monitor_thread = None
-                    self._fifo = None
+        except Exception as ex:
+            if not initialized:
+                # Report the exception back to the main thread so it can be
+                # re-raised appropriately.
+                self._init_queue.put(ex)
+            raise
+        finally:
+            self._subprocess_monitor_thread = None
+            self._fifo = None
 
     def _send(self, cmd: Command, argument: str, **kwargs: SupportedKwarg):
         """Send `cmd` with `argument` over the pipe."""
