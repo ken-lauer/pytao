@@ -452,7 +452,7 @@ class TaoCore:
     def _get_array(
         self,
         cmd: str,
-        dtype: Union[Type[float], Type[int]],
+        dtype: Union[Type[float], Type[int], Type[str]],
         raises: bool,
     ) -> Optional[np.ndarray]:
         """
@@ -484,6 +484,10 @@ class TaoCore:
             ctypes_type = ctypes.c_int32
             num_elements = self.so_lib.tao_c_integer_array_size()
             get_array = self.so_lib.tao_c_get_integer_array
+        elif dtype is str:
+            ctypes_type = ctypes.c_ubyte
+            num_elements = self.so_lib.tao_c_get_string_buffer_length()
+            get_array = self.so_lib.tao_c_get_string_buffer
         else:
             raise ValueError(f"Unsupported dtype: {dtype}")
 
@@ -541,6 +545,32 @@ class TaoCore:
         self.so_lib.tao_c_command(cmd.encode("utf-8"))
         try:
             return self._get_array(cmd=cmd, dtype=int, raises=raises)
+        finally:
+            self.reset_output()
+
+    def cmd_string(self, cmd: str, raises: bool = True) -> Optional[str]:
+        """
+        Get string output from string commands (only 'json' currently).
+
+        Only python commands that load the string buffer can be used with this method.
+
+        Parameters
+        ----------
+        cmd : str
+        raises : bool, default=True
+        """
+        logger.debug(f"Tao> {cmd}")
+
+        self.so_lib.tao_c_command(cmd.encode("utf-8"))
+        try:
+            res = self._get_array(cmd=cmd, dtype=str, raises=raises)
+            if res is not None:
+                bytes_ = res.tobytes()
+                try:
+                    bytes_ = bytes_[: bytes_.index(b"\00")]
+                except ValueError:
+                    pass
+                return bytes_.decode("utf-8", "ignore")
         finally:
             self.reset_output()
 
@@ -624,6 +654,8 @@ def _configure_cdll(so_lib: ctypes.CDLL) -> None:
     """Configure return types for specific exported functions."""
     so_lib.tao_c_out_io_buffer_get_line.restype = ctypes.c_char_p
     so_lib.tao_c_out_io_buffer_reset.restype = None
+    if hasattr(so_lib, "tao_c_get_string_buffer"):
+        so_lib.tao_c_get_string_buffer.restype = ctypes.c_char_p
 
 
 def init_libtao(user_path: str = "") -> Tuple[ctypes.CDLL, str]:
@@ -650,6 +682,9 @@ def init_libtao(user_path: str = "") -> Tuple[ctypes.CDLL, str]:
         if ACC_ROOT_DIR:
             BASE_DIR = os.path.join(ACC_ROOT_DIR, "production", "lib")
             so_lib_file = find_libtao(BASE_DIR)
+            if not so_lib_file:
+                BASE_DIR = os.path.join(ACC_ROOT_DIR, "debug", "lib")
+                so_lib_file = find_libtao(BASE_DIR)
 
     # Library was found from ACC_ROOT_DIR environment variable
     if so_lib_file:
