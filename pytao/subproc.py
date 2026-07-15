@@ -418,6 +418,19 @@ def subprocess_timeout_context(
         )
 
 
+def _close_pipe(pipe: _TaoPipe) -> None:
+    """
+    weakref.finalize callback to tear down a Tao subprocess.
+    """
+    try:
+        pipe.close()
+    except Exception:
+        try:
+            pipe.close_forcefully()
+        except Exception:
+            pass
+
+
 class SubprocessTao(Tao):
     """
     Subprocess helper for Tao.
@@ -467,9 +480,11 @@ class SubprocessTao(Tao):
     """
 
     _subproc_pipe_: _TaoPipe | None
+    _finalizer: weakref.finalize | None
 
     def __init__(self, *args, env: dict[str, str] | None = None, **kwargs):
         self._subproc_pipe_ = None
+        self._finalizer = None
         self.subprocess_env = dict(env if env is not None else os.environ)
 
         try:
@@ -490,6 +505,9 @@ class SubprocessTao(Tao):
 
     def close_subprocess(self, *, force: bool = False) -> None:
         """Close the Tao subprocess."""
+        if self._finalizer is not None:
+            self._finalizer.detach()
+            self._finalizer = None
         if self._subproc_pipe_ is not None:
             if force:
                 self._subproc_pipe_.close_forcefully()
@@ -529,12 +547,6 @@ class SubprocessTao(Tao):
 
     def __exit__(self, *_exc):
         self.close_subprocess()
-
-    def __del__(self) -> None:
-        try:
-            self.close_subprocess()
-        except Exception:
-            pass
 
     def _send_command_through_pipe(self, command: Command, tao_cmdline: str, raises: bool):
         """
@@ -598,7 +610,10 @@ class SubprocessTao(Tao):
         self._reset_graph_managers()
         if not self.subprocess_alive:
             logger.debug("Reinitializing Tao subprocess")
+            if self._finalizer is not None:
+                self._finalizer.detach()
             self._subproc_pipe_ = _TaoPipe(env=self.subprocess_env)
+            self._finalizer = weakref.finalize(self, _close_pipe, self._subproc_pipe_)
 
         return self._send_command_through_pipe("init", startup.tao_init, raises=True)
 
