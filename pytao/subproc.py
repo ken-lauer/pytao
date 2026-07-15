@@ -178,12 +178,26 @@ class _TaoPipe:
         # No exit code -> is still running
         return self._subproc.poll() is None
 
-    def close(self) -> None:
-        """Close the pipe."""
+    def close(self, timeout: float = 1.0) -> None:
+        """
+        Ask the Tao subprocess to quit, terminating after the `timeout` grace period.
+
+        Parameters
+        ----------
+        timeout : float, optional
+            Seconds to wait for a graceful exit before forcing termination.
+            Defaults to 1 second.
+        """
         try:
-            self.send_receive("quit", "", propagate_exceptions=False)
-        except TaoDisconnectedError:
-            pass
+            try:
+                self._send("quit", "")
+            except (BrokenPipeError, OSError):
+                pass
+            try:
+                self._subproc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._subproc.kill()
+                self._subproc.wait()
         finally:
             _cleanup_shm(self._beam_track_shm)
 
