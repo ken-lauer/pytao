@@ -423,12 +423,9 @@ def _close_pipe(pipe: _TaoPipe) -> None:
     weakref.finalize callback to tear down a Tao subprocess.
     """
     try:
-        pipe.close()
+        pipe.close_forcefully()
     except Exception:
-        try:
-            pipe.close_forcefully()
-        except Exception:
-            pass
+        pass
 
 
 class SubprocessTao(Tao):
