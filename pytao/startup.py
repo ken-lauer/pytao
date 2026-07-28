@@ -372,7 +372,7 @@ class TaoStartup:
     disable_smooth_line_calc: bool = False
     external_plotting: bool = False
     geometry: str | tuple[int, int] = ""
-    hook_init_file: AnyPath | None = "tao_hook.init"
+    hook_init_file: AnyPath | None = None
     init_file: AnyPath | None = None
     lattice_file: AnyPath | None = None
     log_startup: bool = False
@@ -435,6 +435,7 @@ class TaoStartup:
             for name in self._path_fields
             if getattr(self, name) is not None
         }
+
         return replace(self, **updates)
 
     @property
