@@ -59,6 +59,15 @@ AnyObservable = Annotated[
 AnyObservation = Annotated[
     Union[EleObservation, DatumObservation], Field(discriminator="obs_type")
 ]
+AnyComparison = Annotated[
+    Union[
+        EleIsClose,
+        DatumIsClose,
+        EleLessThan,
+        DatumLessThan,
+    ],
+    Field(discriminator="comp_type"),
+]
 AnyComparisonResult = Annotated[
     Union[
         EleIsCloseResult,
