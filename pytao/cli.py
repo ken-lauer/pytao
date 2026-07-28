@@ -17,8 +17,40 @@ from .startup import TaoArgumentParser, TaoStartup, create_tao_cli_parser
 logger = logging.getLogger("pytao")
 
 
+class VersionAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        from . import __version__ as version
+        from . import SubprocessTao
+
+        print(f"PyTao {version}")
+
+        try:
+            with SubprocessTao.from_lattice_contents(
+                """
+                beginning[e_tot] = 10e6
+                parameter[geometry] = open
+                parameter[particle] = electron
+
+                d: drift, L = 0.5
+
+                lat: line = (d)
+                use, lat
+                """,
+                noplot=True,
+            ) as tao:
+                tao_version = f"{tao.version()} (from {tao.so_lib_file})"
+        except Exception as ex:
+            print(f"(Unable to determine Tao version: {ex}")
+        else:
+            print(f"Tao   {tao_version}")
+
+        sys.exit(0)
+
+
 @dataclasses.dataclass(config=ConfigDict(extra="forbid", validate_assignment=True))
 class PytaoArgs(TaoStartup):
+    version: bool = False
+
     pycommand: str | None = None
     pylog: str | None = os.environ.get("PYTAO_LOG", "WARNING") or None
     pylog_file: str | None = os.environ.get("PYTAO_LOG_FILE") or None
@@ -51,6 +83,10 @@ def create_pytao_argparser() -> argparse.ArgumentParser:
     )
 
     create_tao_cli_parser(parser)
+
+    parser.add_argument(
+        "-V", "--version", action=VersionAction, nargs=0, help="Show version and exit"
+    )
 
     parser.add_argument(
         "--pyplot",
