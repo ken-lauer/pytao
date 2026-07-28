@@ -162,6 +162,27 @@ def test_init_logging(mock_tao_startup, restore_logging_state):
     assert "self" in call_info, "TaoStartup.run was never called!"
 
 
+def test_version_flag(capsys):
+    """The --version flag prints PyTao/Tao versions and exits."""
+    import argparse
+
+    import pytao
+
+    mock_tao = MagicMock()
+    mock_tao.version.return_value = "2024.0"
+    mock_tao.so_lib_file = "/path/to/libtao.so"
+    mock_tao.__enter__.return_value = mock_tao
+    mock_tao.__exit__.return_value = False
+
+    with patch.object(pytao.SubprocessTao, "from_lattice_contents", return_value=mock_tao):
+        with pytest.raises((SystemExit, argparse.ArgumentError)):
+            PytaoArgs.from_cli_args(["--version"])
+
+    out = capsys.readouterr().out
+    assert f"PyTao {pytao.__version__}" in out
+    assert "Tao   2024.0 (from /path/to/libtao.so)" in out
+
+
 def test_split_args_pylog_file():
     args = PytaoArgs.from_cli_args(["--pylog-file", "out.log", "-init", "init.foo"])
     assert args.pylog_file == "out.log"
