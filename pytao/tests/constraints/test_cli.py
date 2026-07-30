@@ -8,7 +8,11 @@ from pytao.constraints.main import main
 from pytao.constraints.results import ConstraintResultsGroup, SavedObservations
 
 DATA_DIR = pathlib.Path(__file__).parent / "data"
-CONFIGS = ["constraints.yaml", "constraints_grouped.yaml"]
+CONFIGS = [
+    "constraints.yaml",
+    "constraints_grouped.yaml",
+    "constraints_grouped_comps_consolidated.yaml",
+]
 REFERENCE_PATH = DATA_DIR / "reference_results.json"
 
 
