@@ -39,7 +39,7 @@ def _md_status(passed: bool) -> str:
 def run(
     config: ConstraintsConfig,
     config_dir: Path,
-    compare: SavedObservations | None = None,
+    saved_observations: SavedObservations | None = None,
     verbose: bool = False,
 ) -> tuple[SavedObservations, ConstraintResultsGroup]:
     """
@@ -51,7 +51,7 @@ def run(
         Parsed constraints configuration.
     config_dir : Path
         Directory used to resolve relative paths in the config.
-    compare : SavedObservations, optional
+    saved_observations : SavedObservations, optional
         Previously saved observations for regression comparison.
 
     Returns
@@ -149,13 +149,21 @@ def run(
 
     constraint_results: dict[str | None, list[ConstraintResult]] = {}
     regression_results: dict[str | None, list] = {}
-    compare_map = compare.obs_map if compare is not None else None
+    saved_observation_map = (
+        saved_observations.obs_map if saved_observations is not None else None
+    )
 
     for group, constraints in config.constraints_by_group.items():
         constraint_results[group] = []
         regression_results[group] = []
         for constraint in constraints:
-            crs, reg = constraint.run(obs_map, compare_map, group)
+            # Main entrypoint
+            crs, reg = constraint.run(
+                obs_map=obs_map,
+                saved_obs_map=saved_observation_map,
+                comparison_map=config.comparisons,
+                group=group,
+            )
             constraint_results[group].extend(crs)
             regression_results[group].extend(reg)
 
@@ -460,7 +468,10 @@ def main() -> None:
     save_obs_path = Path(args.save_observations) if args.save_observations else None
 
     saved, results = run(
-        config, config_dir=config_path.parent, compare=compare, verbose=not args.markdown
+        config,
+        config_dir=config_path.parent,
+        saved_observations=compare,
+        verbose=not args.markdown,
     )
 
     if args.markdown:
