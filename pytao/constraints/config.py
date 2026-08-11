@@ -80,8 +80,8 @@ class Constraint(ConstraintsBase):
     def run(
         self,
         obs_map: dict[Observable, Observation],
-        saved_obs_map: dict[Observable, Observation] | None,
-        comparison_map: dict[str, AnyComparison],
+        expected_obs_map: dict[Observable, Observation] | None,
+        common_comparison_map: dict[str, AnyComparison],
         group: str | None,
     ) -> tuple[list[ConstraintResult], list[RegressionResult]]: ...
 
@@ -99,15 +99,15 @@ class ComparisonConstraint(Constraint, Generic[CompT]):
     def run(
         self,
         obs_map: dict[Observable, Observation],
-        saved_obs_map: dict[Observable, Observation] | None,
-        comparison_map: dict[str, AnyComparison],
+        expected_obs_map: dict[Observable, Observation] | None,
+        common_comparisons_map: dict[str, AnyComparison],
         group: str | None,
     ) -> tuple[list[ConstraintResult], list[RegressionResult]]:
         # replace string comparison reference with real comparison
         if isinstance(self.comparison, str):
-            if self.comparison not in comparison_map:
+            if self.comparison not in common_comparisons_map:
                 raise ValueError(f"Referenced comparison ({self.comparison}) not defined")
-            self.comparison = cast(CompT, comparison_map[self.comparison])
+            self.comparison = cast(CompT, common_comparisons_map[self.comparison])
 
         missing = [obs for obs in self.required_observables if obs not in obs_map]
         if missing:
@@ -148,8 +148,8 @@ class IsCloseConstraint(ComparisonConstraint[CompT]):
     def run(
         self,
         obs_map: dict[Observable, Observation],
-        saved_obs_map: dict[Observable, Observation] | None,
-        comparison_map: dict[str, AnyComparison],
+        expected_obs_map: dict[Observable, Observation] | None,
+        common_comparison_map: dict[str, AnyComparison],
         group: str | None,
     ) -> tuple[list[ConstraintResult], list[RegressionResult]]:
         """
@@ -159,9 +159,9 @@ class IsCloseConstraint(ComparisonConstraint[CompT]):
         ----------
         obs_map : dict[Observable, Observation]
             mapping specified observable -> complete observation
-        saved_obs_map : dict[Observable, Observation] | None
-            mapping observable -> complete observation from saved
-        comparison_map : dict[str, AnyComparison]
+        expected_obs_map : dict[Observable, Observation] | None
+            mapping observable -> complete observation from e.g. lattice
+        common_comparison_map : dict[str, AnyComparison]
             mapping string -> shared comparisons
         group : str | None
             Name of group this constraint belongs to, Optional
@@ -177,7 +177,7 @@ class IsCloseConstraint(ComparisonConstraint[CompT]):
         TypeError
             if comparison references a non-IsClose comparison
         """
-        crs, _ = super().run(obs_map, saved_obs_map, comparison_map, group)
+        crs, _ = super().run(obs_map, expected_obs_map, common_comparison_map, group)
         reg: list[RegressionResult] = []
         if not isinstance(self.comparison, IsClose):
             raise TypeError(
@@ -185,12 +185,12 @@ class IsCloseConstraint(ComparisonConstraint[CompT]):
                 f"incorrect type: {type(self.comparison)}"
             )
 
-        if self.regression_check and saved_obs_map is not None:
+        if self.regression_check and expected_obs_map is not None:
             for obs in self.required_observables:
-                if obs not in obs_map or obs not in saved_obs_map:
+                if obs not in obs_map or obs not in expected_obs_map:
                     reg_result = self.error_result("Missing observation")
                 else:
-                    reg_result = self.comparison.compare(obs_map[obs], saved_obs_map[obs])
+                    reg_result = self.comparison.compare(obs_map[obs], expected_obs_map[obs])
                 reg.append(
                     RegressionResult(
                         group=group,
@@ -218,11 +218,11 @@ class IsLessConstraint(ComparisonConstraint[CompT]):
     def run(
         self,
         obs_map: dict[Observable, Observation],
-        saved_obs_map: dict[Observable, Observation] | None,
-        comparison_map: dict[str, AnyComparison],
+        expected_obs_map: dict[Observable, Observation] | None,
+        common_comparison_map: dict[str, AnyComparison],
         group: str | None,
     ) -> tuple[list[ConstraintResult], list[RegressionResult]]:
-        crs, reg = super().run(obs_map, saved_obs_map, comparison_map, group)
+        crs, reg = super().run(obs_map, expected_obs_map, common_comparison_map, group)
         if not isinstance(self.comparison, IsLess):
             raise TypeError(
                 f"Referenced comparison ({self.comparison}) is of "
@@ -249,17 +249,17 @@ class RegressionConstraint(Constraint, Generic[CompT]):
     def run(
         self,
         obs_map: dict[Observable, Observation],
-        saved_obs_map: dict[Observable, Observation] | None,
-        comparison_map: dict[str, AnyComparison],
+        expected_obs_map: dict[Observable, Observation] | None,
+        common_comparison_map: dict[str, AnyComparison],
         group: str | None,
     ) -> tuple[list[ConstraintResult], list[RegressionResult]]:
-        if saved_obs_map is None:
+        if expected_obs_map is None:
             return [], []
         obs = next(iter(self.required_observables))
         if isinstance(self.comparison, str):
-            if self.comparison not in comparison_map:
+            if self.comparison not in common_comparison_map:
                 raise ValueError(f"Referenced comparison ({self.comparison}) not defined")
-            ref_comp = comparison_map[self.comparison]
+            ref_comp = common_comparison_map[self.comparison]
             if not isinstance(ref_comp, IsClose):
                 raise TypeError(
                     f"Referenced comparison ({self.comparison}) is of "
@@ -267,10 +267,10 @@ class RegressionConstraint(Constraint, Generic[CompT]):
                 )
             self.comparison = cast(CompT, ref_comp)
 
-        if obs not in obs_map or obs not in saved_obs_map:
+        if obs not in obs_map or obs not in expected_obs_map:
             result = self.error_result("Missing observation")
         else:
-            result = self.evaluate(obs_map[obs], saved_obs_map[obs])
+            result = self.evaluate(obs_map[obs], expected_obs_map[obs])
         return [], [
             RegressionResult(
                 group=group,

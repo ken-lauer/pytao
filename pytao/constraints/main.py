@@ -160,8 +160,8 @@ def run(
             # Main entrypoint
             crs, reg = constraint.run(
                 obs_map=obs_map,
-                saved_obs_map=saved_observation_map,
-                comparison_map=config.comparisons,
+                expected_obs_map=saved_observation_map,
+                common_comparison_map=config.comparisons,
                 group=group,
             )
             constraint_results[group].extend(crs)
