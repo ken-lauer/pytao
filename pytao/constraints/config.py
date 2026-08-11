@@ -164,7 +164,7 @@ class IsCloseConstraint(ComparisonConstraint[CompT]):
         comparison_map : dict[str, AnyComparison]
             mapping string -> shared comparisons
         group : str | None
-            _description_
+            Name of group this constraint belongs to, Optional
 
         Returns
         -------
@@ -181,7 +181,7 @@ class IsCloseConstraint(ComparisonConstraint[CompT]):
         reg: list[RegressionResult] = []
         if not isinstance(self.comparison, IsClose):
             raise TypeError(
-                f"Referenced comparison ({self.comparison}) is of"
+                f"Referenced comparison ({self.comparison}) is of "
                 f"incorrect type: {type(self.comparison)}"
             )
 
@@ -225,7 +225,7 @@ class IsLessConstraint(ComparisonConstraint[CompT]):
         crs, reg = super().run(obs_map, saved_obs_map, comparison_map, group)
         if not isinstance(self.comparison, IsLess):
             raise TypeError(
-                f"Referenced comparison ({self.comparison}) is of"
+                f"Referenced comparison ({self.comparison}) is of "
                 f"incorrect type: {type(self.comparison)}"
             )
 
@@ -262,7 +262,7 @@ class RegressionConstraint(Constraint, Generic[CompT]):
             ref_comp = comparison_map[self.comparison]
             if not isinstance(ref_comp, IsClose):
                 raise TypeError(
-                    f"Referenced comparison ({self.comparison}) is of"
+                    f"Referenced comparison ({self.comparison}) is of "
                     f"incorrect type: {type(ref_comp)}"
                 )
             self.comparison = cast(CompT, ref_comp)
@@ -517,7 +517,7 @@ class ConstraintsConfig(ConstraintsBase):
     )
     comparisons: dict[str, AnyComparison] = Field(
         default_factory=dict,
-        description="Mapping from unimque comparison identifier to reusable comparison settings",
+        description="Mapping from unique comparison identifier to reusable comparison settings",
     )
 
     @model_validator(mode="before")
