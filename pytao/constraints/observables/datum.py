@@ -102,6 +102,7 @@ class DatumIsClose(IsClose[DatumObservation]):
         Comparison for the design value.
     """
 
+    comp_type: Literal["datum_is_close"] = "datum_is_close"
     model_value_test: TolComparison | None = TolComparison()
     design_value_test: TolComparison | None = None
 
@@ -158,6 +159,7 @@ class DatumLessThan(IsLess[DatumObservation]):
         Check design value.
     """
 
+    comp_type: Literal["datum_is_less"] = "datum_is_less"
     model_value: bool = True
     design_value: bool = False
 

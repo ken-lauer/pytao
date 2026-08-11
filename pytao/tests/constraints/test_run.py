@@ -194,7 +194,7 @@ def test_run_regression_missing_observation():
         constraints=[DatumRegressionConstraint(obs=obs)],
     )
     compare = SavedObservations(entries=[])
-    _, results = run(config, DATA_DIR, compare=compare)
+    _, results = run(config, DATA_DIR, saved_observations=compare)
     reg = list(results.iter_regression())
     assert len(reg) == 1
     _, rr = reg[0]
@@ -223,7 +223,7 @@ def test_run_regression_multiple_groups():
             ),
         ]
     )
-    _, results = run(config, DATA_DIR, compare=compare)
+    _, results = run(config, DATA_DIR, saved_observations=compare)
     assert sum(len(v) for v in results.regression.values()) == 2
     by_group = {rr.group: rr for _, rr in results.iter_regression()}
     a = by_group["A"]

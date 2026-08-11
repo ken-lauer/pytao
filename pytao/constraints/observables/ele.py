@@ -181,6 +181,7 @@ class EleIsClose(IsClose[EleObservation]):
         Comparison for global floor z coordinate.
     """
 
+    comp_type: Literal["ele_is_close"] = "ele_is_close"
     twiss_a: AnyTwissComparison | None = BmagTwissComparison()
     twiss_b: AnyTwissComparison | None = BmagTwissComparison()
 
@@ -395,6 +396,8 @@ class EleLessThan(IsLess[EleObservation]):
     floor_z : bool
         Check global floor z coordinate.
     """
+
+    comp_type: Literal["ele_is_less"] = "ele_is_less"
 
     beta_a: bool = False
     alpha_a: bool = False
