@@ -91,10 +91,14 @@ class ComparisonConstraint(Constraint, Generic[CompT]):
 
     comparison: CompT | str
 
-    @abstractmethod
-    def is_satisfied(
-        self, observations: dict[Observable, Observation]
-    ) -> ComparisonResult: ...
+    # comparison object to be filled by `.run()`
+    _comparison_obj: CompT | None = None
+
+    def is_satisfied(self, observations: dict[Observable, Observation]) -> ComparisonResult:
+        if self._comparison_obj is None:
+            raise RuntimeError(
+                "Comparison has not been run, cannot return a meaningful result"
+            )
 
     def run(
         self,
@@ -107,7 +111,9 @@ class ComparisonConstraint(Constraint, Generic[CompT]):
         if isinstance(self.comparison, str):
             if self.comparison not in common_comparisons_map:
                 raise ValueError(f"Referenced comparison ({self.comparison}) not defined")
-            self.comparison = cast(CompT, common_comparisons_map[self.comparison])
+            self._comparison_obj = cast(CompT, common_comparisons_map[self.comparison])
+        else:
+            self._comparison_obj = self.comparison
 
         missing = [obs for obs in self.required_observables if obs not in obs_map]
         if missing:
@@ -179,10 +185,10 @@ class IsCloseConstraint(ComparisonConstraint[CompT]):
         """
         crs, _ = super().run(obs_map, expected_obs_map, common_comparison_map, group)
         reg: list[RegressionResult] = []
-        if not isinstance(self.comparison, IsClose):
+        if not isinstance(self._comparison_obj, IsClose):
             raise TypeError(
-                f"Referenced comparison ({self.comparison}) is of "
-                f"incorrect type: {type(self.comparison)}"
+                f"Referenced comparison ({self._comparison_obj}) is of "
+                f"incorrect type: {type(self._comparison_obj)}"
             )
 
         if self.regression_check and expected_obs_map is not None:
@@ -190,7 +196,9 @@ class IsCloseConstraint(ComparisonConstraint[CompT]):
                 if obs not in obs_map or obs not in expected_obs_map:
                     reg_result = self.error_result("Missing observation")
                 else:
-                    reg_result = self.comparison.compare(obs_map[obs], expected_obs_map[obs])
+                    reg_result = self._comparison_obj.compare(
+                        obs_map[obs], expected_obs_map[obs]
+                    )
                 reg.append(
                     RegressionResult(
                         group=group,
@@ -223,10 +231,10 @@ class IsLessConstraint(ComparisonConstraint[CompT]):
         group: str | None,
     ) -> tuple[list[ConstraintResult], list[RegressionResult]]:
         crs, reg = super().run(obs_map, expected_obs_map, common_comparison_map, group)
-        if not isinstance(self.comparison, IsLess):
+        if not isinstance(self._comparison_obj, IsLess):
             raise TypeError(
-                f"Referenced comparison ({self.comparison}) is of "
-                f"incorrect type: {type(self.comparison)}"
+                f"Referenced comparison ({self._comparison_obj}) is of "
+                f"incorrect type: {type(self._comparison_obj)}"
             )
 
         return crs, reg
@@ -242,6 +250,9 @@ class RegressionConstraint(Constraint, Generic[CompT]):
     """
 
     comparison: CompT | str
+
+    # comparison object to be filled by `.run()`
+    _comparison_obj: CompT | None = None
 
     @abstractmethod
     def evaluate(self, current: Observation, reference: Observation) -> ComparisonResult: ...
@@ -265,7 +276,9 @@ class RegressionConstraint(Constraint, Generic[CompT]):
                     f"Referenced comparison ({self.comparison}) is of "
                     f"incorrect type: {type(ref_comp)}"
                 )
-            self.comparison = cast(CompT, ref_comp)
+            self._comparison_obj = cast(CompT, ref_comp)
+        else:
+            self._comparison_obj = self.comparison
 
         if obs not in obs_map or obs not in expected_obs_map:
             result = self.error_result("Missing observation")
@@ -314,7 +327,8 @@ class EleIsCloseConstraint(IsCloseConstraint[EleIsClose]):
         return frozenset((self.obs_a, self.obs_b))
 
     def is_satisfied(self, observations: dict[Observable, Observation]) -> EleIsCloseResult:
-        return self.comparison.compare(observations[self.obs_a], observations[self.obs_b])
+        super().is_satisfied(observations=observations)
+        return self._comparison_obj.compare(observations[self.obs_a], observations[self.obs_b])
 
     def error_result(self, error: str) -> EleIsCloseResult:
         return EleIsCloseResult(error=error)
@@ -349,7 +363,8 @@ class EleLessThanConstraint(IsLessConstraint[EleLessThan]):
         return frozenset((self.obs_a, self.obs_b))
 
     def is_satisfied(self, observations: dict[Observable, Observation]) -> EleLessThanResult:
-        return self.comparison.compare(observations[self.obs_a], observations[self.obs_b])
+        super().is_satisfied(observations=observations)
+        return self._comparison_obj.compare(observations[self.obs_a], observations[self.obs_b])
 
     def error_result(self, error: str) -> EleLessThanResult:
         return EleLessThanResult(error=error)
@@ -386,7 +401,8 @@ class DatumIsCloseConstraint(IsCloseConstraint[DatumIsClose]):
         return frozenset((self.obs_a, self.obs_b))
 
     def is_satisfied(self, observations: dict[Observable, Observation]) -> DatumIsCloseResult:
-        return self.comparison.compare(observations[self.obs_a], observations[self.obs_b])
+        super().is_satisfied(observations=observations)
+        return self._comparison_obj.compare(observations[self.obs_a], observations[self.obs_b])
 
     def error_result(self, error: str) -> DatumIsCloseResult:
         return DatumIsCloseResult(error=error)
@@ -421,7 +437,8 @@ class DatumLessThanConstraint(IsLessConstraint[DatumLessThan]):
         return frozenset((self.obs_a, self.obs_b))
 
     def is_satisfied(self, observations: dict[Observable, Observation]) -> DatumLessThanResult:
-        return self.comparison.compare(observations[self.obs_a], observations[self.obs_b])
+        super().is_satisfied(observations=observations)
+        return self._comparison_obj.compare(observations[self.obs_a], observations[self.obs_b])
 
     def error_result(self, error: str) -> DatumLessThanResult:
         return DatumLessThanResult(error=error)
@@ -453,7 +470,7 @@ class EleRegressionConstraint(RegressionConstraint[EleIsClose]):
         return frozenset({self.obs})
 
     def evaluate(self, current: EleObservation, reference: EleObservation) -> EleIsCloseResult:
-        return self.comparison.compare(current, reference)
+        return self._comparison_obj.compare(current, reference)
 
     def error_result(self, error: str) -> EleIsCloseResult:
         return EleIsCloseResult(error=error)
@@ -487,7 +504,7 @@ class DatumRegressionConstraint(RegressionConstraint[DatumIsClose]):
     def evaluate(
         self, current: DatumObservation, reference: DatumObservation
     ) -> DatumIsCloseResult:
-        return self.comparison.compare(current, reference)
+        return self._comparison_obj.compare(current, reference)
 
     def error_result(self, error: str) -> DatumIsCloseResult:
         return DatumIsCloseResult(error=error)
