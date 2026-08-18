@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 
 from .. import AnyTao
-from ..util.parsers import parse_derivative, parse_show_version, parse_tao_python_data
+from ..util.parsers import (
+    parse_derivative,
+    parse_show_version,
+    parse_tao_python_data,
+    _value_float_or_none as value_float_or_none,
+)
 from .conftest import ensure_successful_parsing
 from .test_interface_commands import new_tao
 
@@ -765,3 +770,18 @@ def test_parse_derivative_mixed_universes_and_chunking():
     assert result[2].shape == (2, 3)
     expected_u2 = np.array([[21.0, 22.0, 23.0], [24.0, 25.0, 26.0]])
     np.testing.assert_array_equal(result[2], expected_u2)
+
+
+@pytest.mark.parametrize(
+    ["value", "expected"],
+    [
+        pytest.param("", None),
+        pytest.param("1", 1.0),
+        pytest.param("1-5", 1e-5),
+        pytest.param("1+5", 1e5),
+        pytest.param("-1-5", -1e-5),
+        pytest.param("+1-5", 1e-5),
+    ],
+)
+def test_fix_sci_notation(value: str, expected):
+    assert value_float_or_none(value) == expected

@@ -641,13 +641,7 @@ def fix_value(value: str, typ: type):
     if typ is FloatOrNone:
         return _value_float_or_none(value)
     if typ is float:
-        if ("-" in value or "+" in value) and "e" not in value:
-            # TODO: some floating point values like gg%deriv of ele_gen_grad_map
-            # are formatted incorrectly
-            try:
-                return float(value)
-            except ValueError:
-                return float(value.replace("-", "e-").replace("+", "e+"))
+        return _fix_float_scientific_notation(value)
 
     return typ(value)
 
@@ -1365,9 +1359,26 @@ def parse_lat_param_units(lines, cmd="") -> str:
     return lines[0]
 
 
+def _fix_float_scientific_notation(value: str) -> float:
+    if ("-" in value or "+" in value) and "e" not in value:
+        # TODO: some floating point values like gg%deriv of ele_gen_grad_map
+        # are formatted incorrectly:
+        #   e.g., 1.42+245 -> 1.42e245
+        try:
+            return float(value)
+        except ValueError:
+            if value.startswith(("-", "+")):
+                sign, value = value[0], value[1:]
+            else:
+                sign = ""
+
+            return float(sign + value.replace("-", "e-").replace("+", "e+"))
+    return float(value)
+
+
 def _value_float_or_none(s: str):
     s = s.strip()
-    return None if s == "" else float(s)
+    return None if s == "" else _fix_float_scientific_notation(s)
 
 
 def parse_lord_control(lines, cmd="") -> list[LordControlInfo]:
