@@ -1819,6 +1819,7 @@ def parse_ele_wake(lines, cmd="") -> dict[str, Any] | list[list]:
     args = _get_cmd_args(cmd)
     if len(args) > 1 and args[1].lower() in {
         "sr_long_table",
+        "sr_z_long_table",
         "lr_mode_table",
         "sr_trans_table",
     }:
