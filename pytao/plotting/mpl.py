@@ -11,6 +11,7 @@ import matplotlib.axes
 import matplotlib.axis
 import matplotlib.cm
 import matplotlib.collections
+import matplotlib.lines
 import matplotlib.patches
 import matplotlib.path
 import matplotlib.pyplot as plt
@@ -20,6 +21,7 @@ import numpy as np
 
 from . import floor_plan_shapes, layout_shapes, pgplot
 from .curves import PlotCurveLine, PlotCurveSymbols, PlotHistogram, TaoCurveSettings
+from .ele_methods import ElementMethodsPlotData, color_for_value, is_garbage_value
 from .fields import ElementField
 from .patches import (
     PlotPatch,
@@ -841,3 +843,293 @@ class MatplotlibGraphManager(GraphManager):
                 fig.savefig(save)
 
         return field, fig, ax
+
+    def plot_ele_methods(
+        self,
+        ele_id: str = "*",
+        *,
+        columns: Sequence[str] | None = None,
+        ix_uni: str = "1",
+        ix_branch: str = "0",
+        which: str = "model",
+        include_zero_length: bool = False,
+        show_names: bool = True,
+        show_csr_ds_step: bool | None = None,
+        include_layout: bool = True,
+        lane_height: float = 0.8,
+        figsize: tuple[float, float] | None = None,
+        width: float | None = None,
+        height: float | None = None,
+        layout_height: float | None = None,
+        ax: matplotlib.axes.Axes | None = None,
+        save: bool | str | pathlib.Path | None = None,
+    ):
+        """
+        Plot element method settings as categorical lanes along the beamline.
+
+        Each method (e.g., ``tracking_method``) becomes a horizontal lane, with
+        each element drawn as a block spanning its longitudinal extent, colored
+        by the method value.
+
+        Parameters
+        ----------
+        ele_id : str, default="*"
+            Element match string, using the same syntax as `Tao.eles`
+            (e.g., ``"*"``, ``"1:20"``, ``"quad::*"``).
+            Only tracking elements are considered; lord elements are excluded.
+        columns : sequence of str, optional
+            Method columns to plot, in order.  Defaults to all categorical
+            columns with data for the selected elements.
+        ix_uni : str, default="1"
+            Universe index.
+        ix_branch : str, default="0"
+            Branch index.
+        which : "model", "base", or "design", default="model"
+        include_zero_length : bool, default=False
+            Include zero-length elements, drawn as thin vertical lines.
+        show_names : bool, default=True
+            Label method transitions with the element names before and after
+            the transition point, colored by their respective method values.
+        show_csr_ds_step : bool, optional
+            Add a subplot of ``csr_ds_step`` vs s.  The default (`None`) shows
+            it only when CSR is active for at least one selected element.
+        include_layout : bool, default=True
+            Include a lattice layout plot at the bottom.
+        lane_height : float, default=0.8
+            Height of each lane's blocks, where lanes are spaced 1.0 apart.
+        figsize : (float, float), optional
+            Figure size.  Takes precedence over `width` and `height`.
+        width : float, optional
+            Width of the whole plot.
+        height : float, optional
+            Height of the whole plot.
+        layout_height : float, optional
+            Normalized height of the layout plot - assuming the lane plot is
+            of height 1.  Default is 0.5 which is configurable with `set_defaults`.
+        ax : matplotlib.axes.Axes, optional
+            The axes to place the lanes in.  Only supported with
+            ``include_layout=False`` and ``show_csr_ds_step=False``.
+        save : pathlib.Path or str, optional
+            Save the plot to the given filename.
+
+        Returns
+        -------
+        ElementMethodsPlotData
+        matplotlib.figure.Figure
+        list of matplotlib.axes.Axes
+        """
+        data = ElementMethodsPlotData.from_tao(
+            self.tao,
+            ele_id,
+            ix_uni=ix_uni,
+            ix_branch=ix_branch,
+            which=which,
+            include_zero_length=include_zero_length,
+        )
+        if columns is None:
+            columns = list(data.methods)
+        else:
+            columns = list(columns)
+            missing = [col for col in columns if col not in data.methods]
+            if missing:
+                raise ValueError(
+                    f"No data for method column(s) {missing}; "
+                    f"available columns: {list(data.methods)}"
+                )
+        if not data.names or not columns:
+            raise ValueError(f"No elements with method data matched: {ele_id!r}")
+
+        if show_csr_ds_step is None:
+            show_csr_ds_step = data.csr_on
+
+        nrows = 1 + int(show_csr_ds_step) + int(include_layout)
+        if ax is not None:
+            if nrows > 1:
+                raise ValueError(
+                    "A user-specified axis is only supported with "
+                    "include_layout=False and show_csr_ds_step=False"
+                )
+            fig = ax.figure
+            axes = [ax]
+        else:
+            if figsize is None and width is None and height is None:
+                lanes_inches = max(2.0, 0.45 * len(columns) + 1.2)
+                figsize = (
+                    12.0,
+                    lanes_inches
+                    + (1.5 if show_csr_ds_step else 0.0)
+                    + (1.2 if include_layout else 0.0),
+                )
+            else:
+                figsize = get_figsize(figsize, width, height)
+
+            height_ratios = [1.0]
+            if show_csr_ds_step:
+                height_ratios.append(0.4)
+            if include_layout:
+                height_ratios.append(layout_height or _Defaults.layout_height)
+
+            fig, gs = plt.subplots(
+                nrows=nrows,
+                ncols=1,
+                sharex=True,
+                height_ratios=height_ratios,
+                figsize=figsize,
+                squeeze=False,
+            )
+            axes = list(gs[:, 0])
+
+        lanes_ax = axes[0]
+        s_start = np.asarray(data.s_start)
+        s_end = np.asarray(data.s_end)
+        widths = s_end - s_start
+
+        values_present: set[str] = set()
+        for lane, col in enumerate(columns):
+            values = data.methods[col]
+            for value in sorted({value for value in values if value is not None}):
+                values_present.add(value)
+                mask = np.array([v == value for v in values], dtype=bool)
+                color = color_for_value(value)
+                garbage = is_garbage_value(value)
+                blocks = mask & (widths > 0)
+                if blocks.any():
+                    lanes_ax.broken_barh(
+                        list(zip(s_start[blocks], widths[blocks])),
+                        (lane - lane_height / 2, lane_height),
+                        facecolors=color,
+                        edgecolors="black" if garbage else "none",
+                        hatch="///" if garbage else None,
+                    )
+                zero_length = mask & (widths <= 0)
+                if zero_length.any():
+                    lanes_ax.vlines(
+                        s_end[zero_length],
+                        lane - lane_height / 2,
+                        lane + lane_height / 2,
+                        colors=color,
+                        linewidths=1.0,
+                    )
+
+        if show_names:
+            for lane, col in enumerate(columns):
+                values = data.methods[col]
+                for idx in range(len(values) - 1):
+                    before, after = values[idx], values[idx + 1]
+                    if before is None or after is None or before == after:
+                        continue
+                    boundary = s_end[idx]
+                    lanes_ax.vlines(
+                        boundary,
+                        lane - 0.5,
+                        lane + 0.5,
+                        colors="black",
+                        linewidths=0.75,
+                        zorder=3,
+                    )
+                    for name, value, side in (
+                        (data.names[idx], before, -1),
+                        (data.names[idx + 1], after, 1),
+                    ):
+                        lanes_ax.annotate(
+                            name,
+                            xy=(boundary, lane),
+                            xytext=(3 * side, 0),
+                            textcoords="offset points",
+                            rotation=90,
+                            rotation_mode="anchor",
+                            ha="center",
+                            # rotation_mode="anchor" + rotation=90: "bottom"
+                            # places the text left of the anchor, "top" right.
+                            va="bottom" if side < 0 else "top",
+                            fontsize="x-small",
+                            color=color_for_value(value),
+                            bbox={
+                                "boxstyle": "round,pad=0.15",
+                                "facecolor": "white",
+                                "edgecolor": "none",
+                                "alpha": 0.75,
+                            },
+                            clip_on=True,
+                            zorder=4,
+                        )
+
+        lanes_ax.set_yticks(range(len(columns)))
+        lanes_ax.set_yticklabels(columns)
+        lanes_ax.set_ylim(len(columns) - 0.5, -0.5)
+        lanes_ax.grid(axis="x", alpha=0.3)
+        lanes_ax.set_axisbelow(True)
+
+        legend_handles = [
+            matplotlib.patches.Patch(
+                facecolor=color_for_value(value),
+                edgecolor="black" if is_garbage_value(value) else "none",
+                hatch="///" if is_garbage_value(value) else None,
+                label=value,
+            )
+            for value in sorted(values_present)
+        ]
+
+        info_lines = []
+        if data.space_charge_on and data.space_charge_mesh_size is not None:
+            mesh = "×".join(str(v) for v in data.space_charge_mesh_size)
+            info_lines.append(f"space_charge_mesh_size: {mesh}")
+        if data.csr_3d_on and data.csr3d_mesh_size is not None:
+            mesh = "×".join(str(v) for v in data.csr3d_mesh_size)
+            info_lines.append(f"csr3d_mesh_size: {mesh}")
+        if (data.space_charge_on or data.csr_on) and data.n_bin is not None:
+            info_lines.append(f"n_bin: {data.n_bin}")
+        legend_handles.extend(
+            matplotlib.lines.Line2D([], [], linestyle="none", label=line)
+            for line in info_lines
+        )
+
+        lanes_ax.legend(
+            handles=legend_handles,
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1.0),
+            frameon=False,
+            fontsize="small",
+        )
+
+        if show_csr_ds_step:
+            csr_ax = axes[1]
+            csr_methods = data.methods.get("csr_method", [None] * len(data.names))
+            has_step = np.array([ds is not None for ds in data.csr_ds_step], dtype=bool)
+            if has_step.any():
+                steps = np.array([ds if ds is not None else np.nan for ds in data.csr_ds_step])
+                colors = [
+                    color_for_value(value) if value is not None else "#888888"
+                    for value, present in zip(csr_methods, has_step)
+                    if present
+                ]
+                csr_ax.hlines(
+                    steps[has_step],
+                    s_start[has_step],
+                    s_end[has_step],
+                    colors=colors,
+                    linewidths=2.0,
+                )
+            csr_ax.set_ylabel("csr_ds_step [m]")
+            csr_ax.grid(axis="x", alpha=0.3)
+            csr_ax.set_axisbelow(True)
+
+        if include_layout:
+            plot(self.lattice_layout_graph, ax=axes[-1])
+
+        lanes_ax.set_xlim(s_start.min(), s_end.max())
+        axes[-1].set_xlabel("s [m]")
+
+        if fig is not None:
+            if ax is None:
+                fig.tight_layout()
+
+            if save:
+                if save is True:
+                    save = "ele_methods.png"
+                if not pathlib.Path(save).suffix:
+                    save = f"{save}.png"
+                logger.info(f"Saving plot to {save!r}")
+                fig.savefig(save, bbox_inches="tight")
+
+        return data, fig, axes

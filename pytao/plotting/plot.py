@@ -1770,3 +1770,19 @@ class GraphManager(ABC):
         num_points: int = 100,
     ) -> Any:
         pass
+
+    @abstractmethod
+    def plot_ele_methods(
+        self,
+        ele_id: str = "*",
+        *,
+        columns: Sequence[str] | None = None,
+        ix_uni: str = "1",
+        ix_branch: str = "0",
+        which: str = "model",
+        include_zero_length: bool = False,
+        show_names: bool = True,
+        show_csr_ds_step: bool | None = None,
+        include_layout: bool = True,
+    ) -> Any:
+        pass
