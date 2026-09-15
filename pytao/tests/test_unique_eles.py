@@ -40,3 +40,22 @@ def test_unique_eles_missing(tao_cls: type[AnyTao]):
         with pytest.raises(TaoCommandError):
             # this doesn't make it to sending a command -> inum must be int
             tao.unique_ele_ids("foo")
+
+
+def test_eles_track_only(tao_cls: type[AnyTao]):
+    with new_tao(
+        tao_cls, init_file="$ACC_ROOT_DIR/bmad-doc/tao_examples/cbeta_cell/tao.init"
+    ) as tao:
+        default_names = {ele.head.name for ele in tao.eles("*", defaults=False)}
+        tracked_names = {
+            ele.head.name for ele in tao.eles("*", track_only=True, defaults=False)
+        }
+
+        assert "FF.QUA01" in default_names  # super lord
+        assert "FF.QUA01" not in tracked_names
+        assert "FF.QUA01#1" in tracked_names  # its super slave
+
+        # The no-ele_id (superuniverse) path respects track_only, too
+        assert {
+            ele.head.name for ele in tao.eles(track_only=True, defaults=False)
+        } == tracked_names
