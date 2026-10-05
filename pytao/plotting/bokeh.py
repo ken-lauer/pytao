@@ -946,8 +946,8 @@ class BokehLatticeLayoutGraph(BokehGraphBase[LatticeLayoutGraph]):
                 renderers=get_hoverable_renderers(fig),
                 tooltips=[
                     ("name", "@name"),
-                    ("s start [m]", "@s_start"),
-                    ("s end [m]", "@s_end"),
+                    ("s start (m)", "@s_start"),
+                    ("s end (m)", "@s_end"),
                 ],
                 mode="vline",
             )
@@ -1161,7 +1161,7 @@ class BokehFloorPlanGraph(BokehGraphBase[FloorPlanGraph]):
                 renderers=get_hoverable_renderers(fig),
                 tooltips=[
                     ("name", "@name"),
-                    # ("Position [m]", "(@x, @y)"),
+                    # ("Position (m)", "(@x, @y)"),
                 ],
             )
 
@@ -1904,8 +1904,8 @@ def _draw_method_lanes(
                 ("element(s)", "@name"),
                 ("method", "@column"),
                 ("value", "@value"),
-                ("s start [m]", "@s_start"),
-                ("s end [m]", "@s_end"),
+                ("s start (m)", "@s_start"),
+                ("s end (m)", "@s_end"),
             ],
         )
     )
@@ -2038,7 +2038,7 @@ def _draw_csr_ds_step(data: ElementMethodsPlotData, fig: figure) -> None:
         line_width=2.0,
         source=ColumnDataSource(source),
     )
-    fig.yaxis.axis_label = "csr_ds_step [m]"
+    fig.yaxis.axis_label = "csr_ds_step (m)"
 
 
 class BokehGraphManager(GraphManager):
@@ -2432,7 +2432,7 @@ class BokehGraphManager(GraphManager):
             fig.min_border_left = min_border_left
 
         share_x_axes(figs)
-        figs[-1].xaxis.axis_label = "s [m]"
+        figs[-1].xaxis.axis_label = "s (m)"
 
         ui = bokeh.layouts.column(
             [

@@ -630,7 +630,7 @@ def _draw_csr_ds_step(data: ElementMethodsPlotData, ax: matplotlib.axes.Axes) ->
             color_for_value(value) if value is not None else "#888888" for value in csr_methods
         ]
         ax.hlines(steps, s_start, s_end, colors=colors, linewidths=2.0)
-    ax.set_ylabel("csr_ds_step [m]")
+    ax.set_ylabel("csr_ds_step (m)")
     ax.grid(axis="x", alpha=0.3)
     ax.set_axisbelow(True)
 
@@ -1137,7 +1137,7 @@ class MatplotlibGraphManager(GraphManager):
             plot(self.lattice_layout_graph, ax=axes[-1])
 
         lanes_ax.set_xlim(min(data.s_start), max(data.s_end))
-        axes[-1].set_xlabel("s [m]")
+        axes[-1].set_xlabel("s (m)")
 
         if fig is not None:
             if ax is None:
