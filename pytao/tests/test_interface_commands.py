@@ -513,6 +513,16 @@ def test_ele_photon_1(caplog, tao_cls):
             tao.ele_photon(ele_id="1@0>>1", which="model", who="base", verbose=True)
 
 
+def test_ele_shape_1(caplog, tao_cls):
+    with ensure_successful_parsing(caplog):
+        with new_tao(
+            tao_cls,
+            "-init $ACC_ROOT_DIR/regression_tests/pipe_test/tao.init_shape",
+            external_plotting=False,
+        ) as tao:
+            tao.ele_shape(ele_id="1@0>>1", which="model", who="lat_layout", verbose=True)
+
+
 def test_ele_spin_taylor_1(caplog, tao_cls):
     with ensure_successful_parsing(caplog):
         with new_tao(
