@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any, Literal, Optional, Union, cast
 
 import numpy as np
@@ -24,6 +24,11 @@ from .errors import TaoCommandError, TaoInitializationError
 from .startup import TaoStartup
 from .tao import Tao
 from .util import normalize_path
+
+try:
+    import cloudpickle
+except ImportError:
+    cloudpickle = None
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +41,7 @@ Command = Literal[
     "cmd_real",
     "cmd_integer",
     "function",
+    "fork_map",
 ]
 SupportedKwarg = Union[float, int, str, bool, bytes, dict, list, tuple, set, np.ndarray]
 
@@ -131,6 +137,37 @@ def _get_result(
         return tao_output
 
     raise RuntimeError(f"Unexpected pipe response: {value}")
+
+
+def _importable_function_name(func: Callable) -> str:
+    """Qualified `module.name` of `func`, or raise if the subprocess could not import it."""
+    if not callable(func):
+        raise ValueError(f"Object of type {type(func).__name__} is not callable")
+    if not func.__module__ or func.__module__ == "__main__":
+        raise ValueError(f"Function {func.__name__} is not in an importable module")
+    if func.__name__ in {"<lambda>", "__lambda__"}:
+        raise ValueError(f"Function {func.__name__} is a lambda function")
+    if "<locals>" in getattr(func, "__qualname__", ""):
+        raise ValueError(f"Function {func.__name__} is a nested function")
+    return f"{func.__module__}.{func.__name__}"
+
+
+def _serialize_function(func: Callable) -> tuple[Literal["cloudpickle", "name"], bytes | str]:
+    """
+    Serialize `func` for transport to the subprocess.
+
+    Uses cloudpickle when available (supports `__main__` functions, lambdas and
+    closures), otherwise falls back to an importable qualified name.
+    """
+    if cloudpickle is not None:
+        return "cloudpickle", cloudpickle.dumps(func)
+    try:
+        return "name", _importable_function_name(func)
+    except ValueError as ex:
+        raise ValueError(
+            f"{ex}. Install cloudpickle (`pip install pytao[fork]`) to send functions "
+            f"defined in `__main__`, lambdas, or closures to the subprocess."
+        ) from None
 
 
 _BEAM_TRACK_SHM_FMT = "i"
@@ -336,14 +373,9 @@ class _TaoPipe:
             The final deserialized result of the command - which may be an ndarray,
             a list of dictionaries, a list of strings, and so on.
         """
-        if not callable(func):
-            raise ValueError(f"Object of type{type(func).__name__} is not callable")
-        if not func.__module__ or func.__module__ == "__main__":
-            raise ValueError(f"Function {func.__name__} is not in an importable module")
-        if func.__name__ == "__lambda__":
-            raise ValueError(f"Function {func.__name__} is a lambda function")
+        func_name = _importable_function_name(func)
         try:
-            self._send("function", f"{func.__module__}.{func.__name__}", **kwargs)
+            self._send("function", func_name, **kwargs)
             received = self._receive()
             return _get_result(received, propagate_exceptions=True)
         except BrokenPipeError:
@@ -351,6 +383,45 @@ class _TaoPipe:
                 f"Function {func.__name__}() was unable to complete as the subprocess "
                 f"has already exited."
             )
+
+    def send_receive_fork_map(
+        self,
+        func: Callable,
+        items: Iterable,
+        *,
+        max_workers: int | None,
+        timeout: float | None,
+        raises: bool,
+    ) -> list:
+        """
+        Run `Tao.fork_map` inside the subprocess and retrieve its results.
+
+        The subprocess returns `TaoForkError`/`TimeoutError` instances in place
+        of a result when `fork_map` raised; these are re-raised here so the
+        exception type matches the in-process `Tao.fork_map`.
+        """
+        func_kind, func_payload = _serialize_function(func)
+        try:
+            self._send(
+                "fork_map",
+                "",
+                func_kind=func_kind,
+                func=func_payload,
+                items=list(items),
+                max_workers=max_workers,
+                timeout=timeout,
+                raises=raises,
+            )
+            received = self._receive()
+        except BrokenPipeError:
+            raise TaoCommandError(
+                "fork_map was unable to complete as the subprocess has already exited."
+            ) from None
+
+        result = _get_result(received, propagate_exceptions=True)
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
 
 @contextlib.contextmanager
@@ -611,6 +682,37 @@ class SubprocessTao(Tao):
             )
         assert self._subproc_pipe_ is not None
         return self._subproc_pipe_.send_receive_custom(func, kwargs)
+
+    @override
+    def fork_map(
+        self,
+        func,
+        items,
+        *,
+        max_workers: int | None = None,
+        timeout: float | None = None,
+        raises: bool = True,
+    ) -> list:
+        """
+        Run `func(tao, item)` for each item in a forked copy of the Tao subprocess.
+
+        See `Tao.fork_map` for full documentation.  The function is sent to the
+        subprocess with cloudpickle when available (`pip install pytao[fork]`);
+        otherwise it must be importable by name, as with `subprocess_call`.
+        """
+        if not self.subprocess_alive:
+            raise TaoDisconnectedError(
+                "Tao subprocess is no longer running. Make a new `SubprocessTao` "
+                "object or reinitialize with `.init()`."
+            )
+        assert self._subproc_pipe_ is not None
+        return self._subproc_pipe_.send_receive_fork_map(
+            func,
+            items,
+            max_workers=max_workers,
+            timeout=timeout,
+            raises=raises,
+        )
 
     def _init_backend(self, startup: TaoStartup):
         # Backend initialization: this is the hook for either Tao or SubprocessTao

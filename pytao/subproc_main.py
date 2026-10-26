@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import logging
+import pickle
 import struct
 import sys
 import threading
-import traceback
+import warnings
 
 from ._shmem_compat import SharedMemory
 from .core import TaoCommandError
+from .errors import TaoForkError
+from .fork import error_result_from_exception, fork_map
 from .subproc import (
     _BEAM_TRACK_SHM_FMT,
     SubprocessErrorResult,
@@ -52,6 +55,33 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
         kwargs = message.get("kwargs", {})
         return func(tao, **kwargs)
 
+    def run_fork_map(message: SubprocessRequest):
+        kwargs = message.get("kwargs", {})
+        if kwargs["func_kind"] == "cloudpickle":
+            func = pickle.loads(kwargs["func"])
+        else:
+            func = import_by_name(kwargs["func"])
+
+        try:
+            with warnings.catch_warnings():
+                # The only other thread here is the beam-track writer, which
+                # holds no Python locks, so forking is safe.
+                warnings.filterwarnings(
+                    "ignore", message=".*multi-threaded.*", category=DeprecationWarning
+                )
+                return fork_map(
+                    tao,
+                    func,
+                    kwargs["items"],
+                    max_workers=kwargs["max_workers"],
+                    timeout=kwargs["timeout"],
+                    raises=kwargs["raises"],
+                )
+        except (TaoForkError, TimeoutError) as ex:
+            # Returned as the result so the parent re-raises the same type with
+            # its structured attributes intact.
+            return ex
+
     def run_tao_command(message: SubprocessRequest):
         nonlocal tao
 
@@ -78,6 +108,10 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
         if command == "function":
             tao._last_output = []
             return run_custom_function(message, arg)
+
+        if command == "fork_map":
+            tao._last_output = []
+            return run_fork_map(message)
 
         if command == "cmd":
             res = tao.cmd(arg, raises=False)  # sets _last_output
@@ -106,12 +140,7 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
             }
             return success
         except Exception as ex:
-            error: SubprocessErrorResult = {
-                "error": str(ex),
-                "error_cls": type(ex).__name__,
-                "traceback": traceback.format_exc(),
-                "tao_output": getattr(ex, "tao_output", ""),
-            }
+            error: SubprocessErrorResult = error_result_from_exception(ex)
             return error
         finally:
             if tao is not None:

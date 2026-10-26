@@ -10,6 +10,7 @@ from .core import (
 )
 from .errors import (
     TaoException,
+    TaoForkError,
     filter_tao_messages,
     filter_tao_messages_context,
     get_log_mode,
@@ -31,6 +32,7 @@ __all__ = [
     "Tao",
     "TaoCommandError",
     "TaoException",
+    "TaoForkError",
     "TaoInitializationError",
     "TaoSharedLibraryNotFoundError",
     "TaoStartup",
