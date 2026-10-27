@@ -169,11 +169,15 @@ def _pickle_for_subprocess(obj: Any) -> bytes:
                 f"{ex}. Install cloudpickle (`pip install pytao[fork]`) to send "
                 f"lambdas, closures, or objects defined in `__main__` to the subprocess."
             ) from ex
-    else:
-        # A false positive (e.g. the string "__main__" in the data) only costs speed.
-        if cloudpickle is None or b"__main__" not in data:
-            return data
-    return cloudpickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+        return cloudpickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+
+    if cloudpickle is not None and b"__main__" in data:
+        # These bytes name `__main__` objects that the subprocess lacks;
+        # re-pickle so that cloudpickle embeds their definitions instead.
+        # Data that merely contains the text "__main__" also lands here,
+        # which only costs an unneeded re-pickle.
+        return cloudpickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+    return data
 
 
 _BEAM_TRACK_SHM_FMT = "i"
