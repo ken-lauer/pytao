@@ -4,6 +4,7 @@ import contextlib
 import logging
 import os
 import pickle
+import signal
 import struct
 import sys
 import threading
@@ -45,13 +46,30 @@ def _beam_track_writer(
         shm.close()
 
 
-def _detach_from_parent_pipes(output_fifo_fd: int) -> None:
+class _Terminated(BaseException):
+    """Raised on SIGTERM so that `fork_map` unwinds and kills its children."""
+
+
+@contextlib.contextmanager
+def _terminate_unwinds():
+    def handler(signum, _frame):
+        raise _Terminated(signum)
+
+    previous = signal.signal(signal.SIGTERM, handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _reset_forked_child(output_fifo_fd: int) -> None:
     """
     Release a forked child's copies of this process's request/response pipes.
 
     The parent only sees EOF on the FIFO once every writer has closed it, and a
     child reading stdin could consume requests meant for this process.
     """
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
     with contextlib.suppress(OSError):
         os.close(output_fifo_fd)
     devnull = os.open(os.devnull, os.O_RDONLY)
@@ -79,7 +97,7 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
             func = import_by_name(kwargs["func"])
 
         try:
-            with warnings.catch_warnings():
+            with warnings.catch_warnings(), _terminate_unwinds():
                 # The only other thread here is the beam-track writer, which
                 # holds no Python locks, so forking is safe.
                 warnings.filterwarnings(
@@ -164,7 +182,7 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
 
     with open(output_fifo_filename, "wb") as output_fifo:
         fifo_fd = output_fifo.fileno()
-        os.register_at_fork(after_in_child=lambda: _detach_from_parent_pipes(fifo_fd))
+        os.register_at_fork(after_in_child=lambda: _reset_forked_child(fifo_fd))
         while True:
             message = read_pickled_data(sys.stdin.buffer)
             write_pickled_data(output_fifo, make_response(message))
@@ -188,3 +206,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.debug("Caught KeyboardInterrupt; exiting.")
         exit(0)
+    except _Terminated:
+        # Children are reaped; now die by SIGTERM as if it had never been caught.
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGTERM)

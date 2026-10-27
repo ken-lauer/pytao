@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import pickle
 import selectors
 import signal
@@ -119,6 +120,11 @@ def sleep_then_return_pipe_fds(tao: Tao, item: int) -> list[int]:
 
 def stdin_is_devnull(tao: Tao, item: Any) -> bool:
     return os.path.samestat(os.fstat(0), os.stat(os.devnull))
+
+
+def write_pid_and_sleep(tao: Tao, pid_file: str) -> None:
+    pathlib.Path(pid_file).write_text(str(os.getpid()))
+    time.sleep(30)
 
 
 def bunch_x(tao: Tao, item: Any) -> np.ndarray:
@@ -318,3 +324,17 @@ def test_subprocess_children_detach_from_pipes() -> None:
         (fds,) = tao.fork_map(open_pipe_fds, [None])
         assert len(fds) == 1, "only the child's own result pipe should be open"
         assert tao.fork_map(stdin_is_devnull, [None]) == [True]
+
+
+def test_subprocess_timeout_kills_children(tmp_path: pathlib.Path) -> None:
+    pid_files = [str(tmp_path / f"{i}.pid") for i in range(2)]
+    with new_tao(SubprocessTao, OPTICS_INIT) as tao:
+        t0 = time.monotonic()
+        with pytest.raises(TimeoutError):
+            with tao.timeout(1.0):
+                tao.fork_map(write_pid_and_sleep, pid_files, max_workers=2)
+        assert time.monotonic() - t0 < 10.0
+
+    for pid_file in pid_files:
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(pathlib.Path(pid_file).read_text()), 0)
