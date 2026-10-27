@@ -66,12 +66,14 @@ def _child_main(
             if hasattr(err, "add_note"):
                 err.add_note(f"Child process {err.child_traceback}")
             payload = pickle.dumps(err, protocol=pickle.HIGHEST_PROTOCOL)
-        with open(write_fd, "wb") as fp:
-            fp.write(payload)
-    finally:
+        # The parent waits on this process once the pipe closes, so flush
+        # (which can block on a full stdout pipe) must come first.
         with contextlib.suppress(Exception):
             sys.stdout.flush()
             sys.stderr.flush()
+        with open(write_fd, "wb") as fp:
+            fp.write(payload)
+    finally:
         # Skip atexit handlers and finalizers; they belong to the parent.
         os._exit(code)
 
@@ -178,7 +180,12 @@ def fork_map_payloads(
         sys.stdout.flush()
         sys.stderr.flush()
         read_fd, write_fd = os.pipe()
-        pid = os.fork()
+        try:
+            pid = os.fork()
+        except BaseException:
+            os.close(read_fd)
+            os.close(write_fd)
+            raise
         if pid == 0:
             _child_main(tao, func, index, items[index], write_fd, [read_fd, *live])
         # The parent must drop its write end or EOF never arrives.

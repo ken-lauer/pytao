@@ -292,6 +292,24 @@ def test_keyboard_interrupt_reaps_children(
     assert_all_reaped(forked_pids)
 
 
+def test_fork_failure_closes_pipes(plain_tao: Tao, monkeypatch: pytest.MonkeyPatch) -> None:
+    orig_fork = os.fork
+    forks = 0
+
+    def fork_once() -> int:
+        nonlocal forks
+        forks += 1
+        if forks > 1:
+            raise BlockingIOError("fork limit")
+        return orig_fork()
+
+    before = open_pipe_fds(plain_tao, None)
+    monkeypatch.setattr(os, "fork", fork_once)
+    with pytest.raises(BlockingIOError):
+        plain_tao.fork_map(sleep_forever, range(2), max_workers=2)
+    assert open_pipe_fds(plain_tao, None) == before
+
+
 def test_closure_and_lambda_in_process(plain_tao: Tao) -> None:
     offset = 10
 
