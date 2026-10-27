@@ -177,9 +177,22 @@ def _serialize_items(items: Iterable) -> bytes:
 
     Sending bytes lets the subprocess unpickle them inside its error handling;
     an item it cannot unpickle mid-stream would otherwise kill the subprocess.
+
+    Plain pickle is used when it suffices, as cloudpickle is much slower.
+    cloudpickle is needed for lambdas and closures, and for `__main__` objects,
+    which plain pickle references by a name the subprocess cannot resolve.
     """
-    dumps = cloudpickle.dumps if cloudpickle is not None else pickle.dumps
-    return dumps(list(items), protocol=pickle.HIGHEST_PROTOCOL)
+    items = list(items)
+    try:
+        data = pickle.dumps(items, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception:
+        if cloudpickle is None:
+            raise
+    else:
+        # A false positive (e.g. the string "__main__" in the data) only costs speed.
+        if cloudpickle is None or b"__main__" not in data:
+            return data
+    return cloudpickle.dumps(items, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 _BEAM_TRACK_SHM_FMT = "i"
