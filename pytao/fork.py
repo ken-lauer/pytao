@@ -51,10 +51,20 @@ def _write_all(fd: int, data: bytes) -> None:
         view = view[written:]
 
 
-def _child_main(tao: Tao, func: Callable, item: Any, write_fd: int, read_fd: int) -> NoReturn:
+def _child_main(
+    tao: Tao,
+    func: Callable,
+    item: Any,
+    write_fd: int,
+    inherited_fds: Iterable[int],
+) -> NoReturn:
     code = 0
     try:
-        os.close(read_fd)
+        # Holding siblings' read ends would keep a write to an orphaned
+        # parent from failing with EPIPE.
+        for fd in inherited_fds:
+            with contextlib.suppress(OSError):
+                os.close(fd)
         try:
             payload = pickle.dumps(
                 {"result": func(tao, item)}, protocol=pickle.HIGHEST_PROTOCOL
@@ -174,7 +184,7 @@ def fork_map(
         read_fd, write_fd = os.pipe()
         pid = os.fork()
         if pid == 0:
-            _child_main(tao, func, items[index], write_fd, read_fd)
+            _child_main(tao, func, items[index], write_fd, [read_fd, *live])
         # The parent must drop its write end or EOF never arrives.
         os.close(write_fd)
         child = _Child(pid=pid, index=index, fd=read_fd)

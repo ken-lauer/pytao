@@ -4,6 +4,7 @@ import os
 import pickle
 import selectors
 import signal
+import stat
 import time
 from collections.abc import Generator
 from typing import Any
@@ -97,6 +98,27 @@ def kill_self(tao: Tao, item: Any) -> None:
 
 def sleep_forever(tao: Tao, item: Any) -> None:
     time.sleep(30)
+
+
+def open_pipe_fds(tao: Tao, item: Any) -> list[int]:
+    fds = []
+    for fd in range(3, 256):
+        try:
+            if stat.S_ISFIFO(os.fstat(fd).st_mode):
+                fds.append(fd)
+        except OSError:
+            pass
+    return fds
+
+
+def sleep_then_return_pipe_fds(tao: Tao, item: int) -> list[int]:
+    # Keep every child alive until all have been forked.
+    time.sleep(0.5)
+    return open_pipe_fds(tao, item)
+
+
+def stdin_is_devnull(tao: Tao, item: Any) -> bool:
+    return os.path.samestat(os.fstat(0), os.stat(os.devnull))
 
 
 def bunch_x(tao: Tao, item: Any) -> np.ndarray:
@@ -283,3 +305,16 @@ def test_not_implemented_without_fork(plain_tao: Tao, monkeypatch: pytest.Monkey
     monkeypatch.delattr(os, "fork")
     with pytest.raises(NotImplementedError):
         plain_tao.fork_map(identity, [1])
+
+
+def test_children_do_not_hold_sibling_pipes(tao: AnyTao) -> None:
+    (baseline,) = tao.fork_map(open_pipe_fds, [None])
+    results = tao.fork_map(sleep_then_return_pipe_fds, range(4), max_workers=4)
+    assert [len(fds) for fds in results] == [len(baseline)] * 4
+
+
+def test_subprocess_children_detach_from_pipes() -> None:
+    with new_tao(SubprocessTao, OPTICS_INIT) as tao:
+        (fds,) = tao.fork_map(open_pipe_fds, [None])
+        assert len(fds) == 1, "only the child's own result pipe should be open"
+        assert tao.fork_map(stdin_is_devnull, [None]) == [True]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
 import pickle
 import struct
 import sys
@@ -41,6 +43,20 @@ def _beam_track_writer(
             stop_event.wait(rate)
     finally:
         shm.close()
+
+
+def _detach_from_parent_pipes(output_fifo_fd: int) -> None:
+    """
+    Release a forked child's copies of this process's request/response pipes.
+
+    The parent only sees EOF on the FIFO once every writer has closed it, and a
+    child reading stdin could consume requests meant for this process.
+    """
+    with contextlib.suppress(OSError):
+        os.close(output_fifo_fd)
+    devnull = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(devnull, 0)
+    os.close(devnull)
 
 
 def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None:
@@ -147,6 +163,8 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
                 tao.reset_output()
 
     with open(output_fifo_filename, "wb") as output_fifo:
+        fifo_fd = output_fifo.fileno()
+        os.register_at_fork(after_in_child=lambda: _detach_from_parent_pipes(fifo_fd))
         while True:
             message = read_pickled_data(sys.stdin.buffer)
             write_pickled_data(output_fifo, make_response(message))
