@@ -106,7 +106,7 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
                 return fork_map(
                     tao,
                     func,
-                    kwargs["items"],
+                    pickle.loads(kwargs["items"]),
                     max_workers=kwargs["max_workers"],
                     timeout=kwargs["timeout"],
                     raises=kwargs["raises"],

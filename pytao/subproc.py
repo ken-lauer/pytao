@@ -170,6 +170,17 @@ def _serialize_function(func: Callable) -> tuple[Literal["cloudpickle", "name"],
         ) from None
 
 
+def _serialize_items(items: Iterable) -> bytes:
+    """
+    Pickle `items` for transport to the subprocess.
+
+    Sending bytes lets the subprocess unpickle them inside its error handling;
+    an item it cannot unpickle mid-stream would otherwise kill the subprocess.
+    """
+    dumps = cloudpickle.dumps if cloudpickle is not None else pickle.dumps
+    return dumps(list(items), protocol=pickle.HIGHEST_PROTOCOL)
+
+
 _BEAM_TRACK_SHM_FMT = "i"
 _BEAM_TRACK_SHM_SIZE = struct.calcsize(_BEAM_TRACK_SHM_FMT)
 
@@ -407,7 +418,7 @@ class _TaoPipe:
                 "",
                 func_kind=func_kind,
                 func=func_payload,
-                items=list(items),
+                items=_serialize_items(items),
                 max_workers=max_workers,
                 timeout=timeout,
                 raises=raises,

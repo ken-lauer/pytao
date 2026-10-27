@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import dataclasses
 import os
 import pathlib
 import pickle
 import selectors
 import signal
 import stat
+import sys
 import time
 from collections.abc import Generator
 from typing import Any
@@ -13,7 +15,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from .. import SubprocessTao, Tao, TaoForkError
+from .. import SubprocessTao, Tao, TaoCommandError, TaoForkError
 from ..subproc import AnyTao
 from .conftest import new_tao
 
@@ -51,6 +53,20 @@ def forked_pids(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
     monkeypatch.setattr(os, "fork", recording_fork)
     return pids
+
+
+@pytest.fixture
+def main_module_class(monkeypatch: pytest.MonkeyPatch) -> type:
+    """A class that pickles by reference to `__main__`, which the subprocess lacks."""
+
+    @dataclasses.dataclass
+    class ForkItem:
+        value: int
+
+    ForkItem.__module__ = "__main__"
+    ForkItem.__qualname__ = ForkItem.__name__ = "_PytaoForkItem"
+    monkeypatch.setattr(sys.modules["__main__"], "_PytaoForkItem", ForkItem, raising=False)
+    return ForkItem
 
 
 def assert_all_reaped(pids: list[int]) -> None:
@@ -125,6 +141,10 @@ def stdin_is_devnull(tao: Tao, item: Any) -> bool:
 def write_pid_and_sleep(tao: Tao, pid_file: str) -> None:
     pathlib.Path(pid_file).write_text(str(os.getpid()))
     time.sleep(30)
+
+
+def item_value(tao: Tao, item: Any) -> int:
+    return item.value
 
 
 def bunch_x(tao: Tao, item: Any) -> np.ndarray:
@@ -338,3 +358,21 @@ def test_subprocess_timeout_kills_children(tmp_path: pathlib.Path) -> None:
     for pid_file in pid_files:
         with pytest.raises(ProcessLookupError):
             os.kill(int(pathlib.Path(pid_file).read_text()), 0)
+
+
+def test_subprocess_items_from_main(main_module_class: type) -> None:
+    pytest.importorskip("cloudpickle")
+    with new_tao(SubprocessTao, OPTICS_INIT) as tao:
+        assert tao.fork_map(item_value, [main_module_class(1), main_module_class(2)]) == [1, 2]
+
+
+def test_subprocess_survives_unloadable_items(
+    main_module_class: type,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("pytao.subproc.cloudpickle", None)
+    with new_tao(SubprocessTao, OPTICS_INIT) as tao:
+        with pytest.raises(TaoCommandError, match="_PytaoForkItem"):
+            tao.fork_map(item_value, [main_module_class(1)])
+        assert tao.subprocess_alive
+        assert tao.fork_map(identity, [1, 2]) == [1, 2]
