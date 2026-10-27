@@ -21,7 +21,7 @@ from typing_extensions import NotRequired, TypedDict, override
 
 from ._shmem_compat import SharedMemory
 from .errors import TaoCommandError, TaoInitializationError
-from .fork import resolve_max_workers
+from .fork import decode_fork_payloads, resolve_max_workers
 from .startup import TaoStartup
 from .tao import Tao
 from .util import normalize_path
@@ -408,9 +408,10 @@ class _TaoPipe:
         """
         Run `Tao.fork_map` inside the subprocess and retrieve its results.
 
-        The subprocess returns `TaoForkError`/`TimeoutError` instances in place
-        of a result when `fork_map` raised; these are re-raised here so the
-        exception type matches the in-process `Tao.fork_map`.
+        The subprocess forwards each child's pickled result undecoded, so
+        results are unpickled only here.  It returns `TaoForkError`/`TimeoutError`
+        instances in place of a result when `fork_map` raised; these are
+        re-raised here so the exception type matches the in-process `Tao.fork_map`.
         """
         func_kind, func_payload = _serialize_function(func)
         try:
@@ -433,7 +434,7 @@ class _TaoPipe:
         result = _get_result(received, propagate_exceptions=True)
         if isinstance(result, BaseException):
             raise result
-        return result
+        return decode_fork_payloads(result, raises)
 
 
 @contextlib.contextmanager

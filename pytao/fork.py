@@ -87,12 +87,11 @@ def _child_main(
 
 
 def _decode_child_payload(
-    child: _Child,
+    index: int,
     payload: bytes,
     exit_code: int,
     raises: bool,
 ) -> Any:
-    index = child.index
     err: TaoForkError | None = None
 
     if exit_code < 0:
@@ -165,6 +164,17 @@ def resolve_max_workers(max_workers: int | None) -> int:
     return max(1, max_workers)
 
 
+def decode_fork_payloads(
+    payloads: list[tuple[bytes, int]],
+    raises: bool = True,
+) -> list[Any]:
+    """Decode the `(payload, exit_code)` pairs from `fork_map_payloads`."""
+    return [
+        _decode_child_payload(index, payload, exit_code, raises)
+        for index, (payload, exit_code) in enumerate(payloads)
+    ]
+
+
 def fork_map(
     tao: Tao,
     func: Callable[[Tao, T], R],
@@ -179,6 +189,29 @@ def fork_map(
 
     See `Tao.fork_map` for full documentation.
     """
+    payloads = fork_map_payloads(
+        tao, func, items, max_workers=max_workers, timeout=timeout, raises=raises
+    )
+    return decode_fork_payloads(payloads, raises)
+
+
+def fork_map_payloads(
+    tao: Tao,
+    func: Callable[[Tao, T], R],
+    items: Iterable[T],
+    *,
+    max_workers: int | None = None,
+    timeout: float | None = None,
+    raises: bool = True,
+) -> list[tuple[bytes, int]]:
+    """
+    Run `fork_map`, leaving each child's pickled result undecoded.
+
+    Failed children are decoded as they finish so that `raises` still stops at
+    the first failure.  Successful payloads are returned as `(payload,
+    exit_code)` pairs for `decode_fork_payloads`, letting a caller forward them
+    without unpickling.
+    """
     if not hasattr(os, "fork"):
         raise NotImplementedError("fork_map requires os.fork(), which is unavailable here")
 
@@ -189,7 +222,7 @@ def fork_map(
         return []
 
     workers = min(workers, n)
-    results: list[Any] = [None] * n
+    results: list[tuple[bytes, int]] = [(b"", 0)] * n
     pending = iter(range(n))
     live: dict[int, _Child] = {}
     sel = selectors.DefaultSelector()
@@ -235,9 +268,10 @@ def fork_map(
                 del live[key.fd]
                 _, status = os.waitpid(child.pid, 0)
                 exit_code = os.waitstatus_to_exitcode(status)
-                results[child.index] = _decode_child_payload(
-                    child, bytes(child.buf), exit_code, raises
-                )
+                payload = bytes(child.buf)
+                if raises and exit_code != 0:
+                    _decode_child_payload(child.index, payload, exit_code, raises=True)
+                results[child.index] = (payload, exit_code)
                 next_index = next(pending, None)
                 if next_index is not None:
                     spawn(next_index)

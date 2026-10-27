@@ -13,7 +13,7 @@ import warnings
 from ._shmem_compat import SharedMemory
 from .core import TaoCommandError
 from .errors import TaoForkError
-from .fork import error_result_from_exception, fork_map
+from .fork import error_result_from_exception, fork_map_payloads
 from .subproc import (
     _BEAM_TRACK_SHM_FMT,
     SubprocessErrorResult,
@@ -103,7 +103,7 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
                 warnings.filterwarnings(
                     "ignore", message=".*multi-threaded.*", category=DeprecationWarning
                 )
-                return fork_map(
+                return fork_map_payloads(
                     tao,
                     func,
                     pickle.loads(kwargs["items"]),

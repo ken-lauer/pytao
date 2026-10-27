@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from .. import SubprocessTao, Tao, TaoCommandError, TaoForkError
-from ..fork import resolve_max_workers
+from ..fork import decode_fork_payloads, fork_map_payloads, resolve_max_workers
 from ..subproc import AnyTao
 from .conftest import new_tao
 
@@ -193,6 +193,13 @@ def test_zero_max_workers(tao: AnyTao) -> None:
 
 def test_negative_max_workers(tao: AnyTao) -> None:
     assert tao.fork_map(identity, range(4), max_workers=-1) == list(range(4))
+
+
+def test_payloads_left_undecoded(plain_tao: Tao) -> None:
+    payloads = fork_map_payloads(plain_tao, identity, [1, "a"])
+    assert [type(payload) for payload, _ in payloads] == [bytes, bytes]
+    assert [code for _, code in payloads] == [0, 0]
+    assert decode_fork_payloads(payloads) == [1, "a"]
 
 
 def test_empty_items(tao: AnyTao) -> None:
