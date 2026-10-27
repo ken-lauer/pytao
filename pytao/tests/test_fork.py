@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from .. import SubprocessTao, Tao, TaoCommandError, TaoForkError
+from ..fork import resolve_max_workers
 from ..subproc import AnyTao
 from .conftest import new_tao
 
@@ -172,6 +173,26 @@ def test_order_preserved(tao: AnyTao) -> None:
 @pytest.mark.parametrize("max_workers", [1, 2, 4, None])
 def test_max_workers(tao: AnyTao, max_workers: int | None) -> None:
     assert tao.fork_map(identity, range(6), max_workers=max_workers) == list(range(6))
+
+
+@pytest.mark.parametrize(
+    ("max_workers", "expected"),
+    [(None, 8), (3, 3), (-1, 7), (-7, 1), (-8, 1), (-100, 1)],
+)
+def test_resolve_max_workers(
+    monkeypatch: pytest.MonkeyPatch, max_workers: int | None, expected: int
+) -> None:
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    assert resolve_max_workers(max_workers) == expected
+
+
+def test_zero_max_workers(tao: AnyTao) -> None:
+    with pytest.raises(ValueError, match="nonzero"):
+        tao.fork_map(identity, [1], max_workers=0)
+
+
+def test_negative_max_workers(tao: AnyTao) -> None:
+    assert tao.fork_map(identity, range(4), max_workers=-1) == list(range(4))
 
 
 def test_empty_items(tao: AnyTao) -> None:

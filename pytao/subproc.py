@@ -21,6 +21,7 @@ from typing_extensions import NotRequired, TypedDict, override
 
 from ._shmem_compat import SharedMemory
 from .errors import TaoCommandError, TaoInitializationError
+from .fork import resolve_max_workers
 from .startup import TaoStartup
 from .tao import Tao
 from .util import normalize_path
@@ -720,7 +721,7 @@ class SubprocessTao(Tao):
         return self._subproc_pipe_.send_receive_fork_map(
             func,
             items,
-            max_workers=max_workers,
+            max_workers=resolve_max_workers(max_workers),
             timeout=timeout,
             raises=raises,
         )

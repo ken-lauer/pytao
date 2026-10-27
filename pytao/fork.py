@@ -148,6 +148,23 @@ def _decode_child_payload(
     return err
 
 
+def resolve_max_workers(max_workers: int | None) -> int:
+    """
+    Resolve a `fork_map` worker count to a positive number of processes.
+
+    `None` means the number of CPUs; a negative value counts back from it, so
+    `-1` leaves one CPU free.  The result is at least 1.
+    """
+    cpus = os.cpu_count() or 1
+    if max_workers is None:
+        return cpus
+    if max_workers == 0:
+        raise ValueError("max_workers must be a nonzero integer or None")
+    if max_workers < 0:
+        max_workers += cpus
+    return max(1, max_workers)
+
+
 def fork_map(
     tao: Tao,
     func: Callable[[Tao, T], R],
@@ -165,12 +182,13 @@ def fork_map(
     if not hasattr(os, "fork"):
         raise NotImplementedError("fork_map requires os.fork(), which is unavailable here")
 
+    workers = resolve_max_workers(max_workers)
     items = list(items)
     n = len(items)
     if n == 0:
         return []
 
-    max_workers = max(1, min(max_workers or (os.cpu_count() or 1), n))
+    workers = min(workers, n)
     results: list[Any] = [None] * n
     pending = iter(range(n))
     live: dict[int, _Child] = {}
@@ -192,7 +210,7 @@ def fork_map(
         sel.register(read_fd, selectors.EVENT_READ, child)
 
     try:
-        for _ in range(max_workers):
+        for _ in range(workers):
             spawn(next(pending))
 
         while live:
