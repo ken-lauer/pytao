@@ -153,46 +153,27 @@ def _importable_function_name(func: Callable) -> str:
     return f"{func.__module__}.{func.__name__}"
 
 
-def _serialize_function(func: Callable) -> tuple[Literal["cloudpickle", "name"], bytes | str]:
+def _pickle_for_subprocess(obj: Any) -> bytes:
     """
-    Serialize `func` for transport to the subprocess.
-
-    Uses cloudpickle when available (supports `__main__` functions, lambdas and
-    closures), otherwise falls back to an importable qualified name.
-    """
-    if cloudpickle is not None:
-        return "cloudpickle", cloudpickle.dumps(func)
-    try:
-        return "name", _importable_function_name(func)
-    except ValueError as ex:
-        raise ValueError(
-            f"{ex}. Install cloudpickle (`pip install pytao[fork]`) to send functions "
-            f"defined in `__main__`, lambdas, or closures to the subprocess."
-        ) from None
-
-
-def _serialize_items(items: Iterable) -> bytes:
-    """
-    Pickle `items` for transport to the subprocess.
-
-    Sending bytes lets the subprocess unpickle them inside its error handling;
-    an item it cannot unpickle mid-stream would otherwise kill the subprocess.
+    Pickle `obj` so that the Tao subprocess can unpickle it.
 
     Plain pickle is used when it suffices, as cloudpickle is much slower.
     cloudpickle is needed for lambdas and closures, and for `__main__` objects,
     which plain pickle references by a name the subprocess cannot resolve.
     """
-    items = list(items)
     try:
-        data = pickle.dumps(items, protocol=pickle.HIGHEST_PROTOCOL)
-    except Exception:
+        data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception as ex:
         if cloudpickle is None:
-            raise
+            raise ValueError(
+                f"{ex}. Install cloudpickle (`pip install pytao[fork]`) to send "
+                f"lambdas, closures, or objects defined in `__main__` to the subprocess."
+            ) from ex
     else:
         # A false positive (e.g. the string "__main__" in the data) only costs speed.
         if cloudpickle is None or b"__main__" not in data:
             return data
-    return cloudpickle.dumps(items, protocol=pickle.HIGHEST_PROTOCOL)
+    return cloudpickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 _BEAM_TRACK_SHM_FMT = "i"
@@ -421,19 +402,21 @@ class _TaoPipe:
         """
         Run `Tao.fork_map` inside the subprocess and retrieve its results.
 
-        The subprocess forwards each child's pickled result undecoded, so
-        results are unpickled only here.  It returns `TaoForkError`/`TimeoutError`
+        `func` and `items` are sent pickled, so that the subprocess unpickles
+        them within its error handling; one it cannot unpickle mid-stream would
+        otherwise kill it.  The subprocess forwards each child's pickled result
+        undecoded, so results are unpickled only here.  It returns `TaoForkError`/`TimeoutError`
         instances in place of a result when `fork_map` raised; these are
         re-raised here so the exception type matches the in-process `Tao.fork_map`.
         """
-        func_kind, func_payload = _serialize_function(func)
+        func_payload = _pickle_for_subprocess(func)
+        items_payload = _pickle_for_subprocess(list(items))
         try:
             self._send(
                 "fork_map",
                 "",
-                func_kind=func_kind,
                 func=func_payload,
-                items=_serialize_items(items),
+                items=items_payload,
                 max_workers=max_workers,
                 timeout=timeout,
                 raises=raises,
@@ -720,9 +703,9 @@ class SubprocessTao(Tao):
         """
         Run `func(tao, item)` for each item in a forked copy of the Tao subprocess.
 
-        See `Tao.fork_map` for full documentation.  The function is sent to the
-        subprocess with cloudpickle when available (`pip install pytao[fork]`);
-        otherwise it must be importable by name, as with `subprocess_call`.
+        See `Tao.fork_map` for full documentation.  Lambdas, closures, and
+        functions or items defined in `__main__` require cloudpickle
+        (`pip install pytao[fork]`) to be sent to the subprocess.
         """
         return self._require_pipe().send_receive_fork_map(
             func,

@@ -101,10 +101,8 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
 
     def run_fork_map(message: SubprocessRequest):
         kwargs = message.get("kwargs", {})
-        if kwargs["func_kind"] == "cloudpickle":
-            func = pickle.loads(kwargs["func"])
-        else:
-            func = import_by_name(kwargs["func"])
+        func = pickle.loads(kwargs["func"])
+        items = pickle.loads(kwargs["items"])
 
         try:
             with warnings.catch_warnings(), _terminate_unwinds():
@@ -116,7 +114,7 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
                 return fork_map_payloads(
                     tao,
                     func,
-                    pickle.loads(kwargs["items"]),
+                    items,
                     max_workers=kwargs["max_workers"],
                     timeout=kwargs["timeout"],
                     raises=kwargs["raises"],

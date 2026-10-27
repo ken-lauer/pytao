@@ -17,7 +17,7 @@ import pytest
 
 from .. import SubprocessTao, Tao, TaoCommandError, TaoForkError
 from ..fork import decode_fork_payloads, fork_map_payloads, resolve_max_workers
-from ..subproc import AnyTao, _serialize_items
+from ..subproc import AnyTao, _pickle_for_subprocess
 from .conftest import new_tao
 
 pytestmark = pytest.mark.filterwarnings(
@@ -415,7 +415,9 @@ def test_subprocess_survives_unloadable_items(
     ],
 )
 def test_items_use_plain_pickle_when_possible(items: list) -> None:
-    assert _serialize_items(items) == pickle.dumps(items, protocol=pickle.HIGHEST_PROTOCOL)
+    assert _pickle_for_subprocess(items) == pickle.dumps(
+        items, protocol=pickle.HIGHEST_PROTOCOL
+    )
 
 
 @pytest.mark.parametrize(
@@ -428,6 +430,6 @@ def test_items_use_plain_pickle_when_possible(items: list) -> None:
 def test_items_fall_back_to_cloudpickle(main_module_class: type, make_items) -> None:
     cloudpickle = pytest.importorskip("cloudpickle")
     items = make_items(main_module_class)
-    assert _serialize_items(items) == cloudpickle.dumps(
+    assert _pickle_for_subprocess(items) == cloudpickle.dumps(
         items, protocol=pickle.HIGHEST_PROTOCOL
     )
