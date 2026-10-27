@@ -605,6 +605,16 @@ class SubprocessTao(Tao):
             return False
         return self._subproc_pipe_.alive
 
+    def _require_pipe(self) -> _TaoPipe:
+        """The pipe to the running subprocess, or raise `TaoDisconnectedError`."""
+        pipe = self._subproc_pipe_
+        if pipe is None or not pipe.alive:
+            raise TaoDisconnectedError(
+                "Tao subprocess is no longer running. Make a new `SubprocessTao` "
+                "object or reinitialize with `.init()`."
+            )
+        return pipe
+
     def close_subprocess(self, *, force: bool = False) -> None:
         """Close the Tao subprocess."""
         if self._subproc_pipe_ is not None:
@@ -665,13 +675,7 @@ class SubprocessTao(Tao):
         Uncaught errors in the subprocess will be propagated regardless of
         ``raises``.
         """
-        if not self.subprocess_alive:
-            raise TaoDisconnectedError(
-                "Tao subprocess is no longer running. Make a new `SubprocessTao` "
-                "object or reinitialize with `.init()`."
-            )
-        assert self._subproc_pipe_ is not None
-        output, result = self._subproc_pipe_.send_receive(command, tao_cmdline)
+        output, result = self._require_pipe().send_receive(command, tao_cmdline)
         output_lines = output.splitlines()
         self._last_output = output_lines
 
@@ -701,13 +705,7 @@ class SubprocessTao(Tao):
         `tao` object, and the remainder of the arguments are user-specified by
         keyword only.
         """
-        if not self.subprocess_alive:
-            raise TaoDisconnectedError(
-                "Tao subprocess is no longer running. Make a new `SubprocessTao` "
-                "object or reinitialize with `.init()`."
-            )
-        assert self._subproc_pipe_ is not None
-        return self._subproc_pipe_.send_receive_custom(func, kwargs)
+        return self._require_pipe().send_receive_custom(func, kwargs)
 
     @override
     def fork_map(
@@ -726,13 +724,7 @@ class SubprocessTao(Tao):
         subprocess with cloudpickle when available (`pip install pytao[fork]`);
         otherwise it must be importable by name, as with `subprocess_call`.
         """
-        if not self.subprocess_alive:
-            raise TaoDisconnectedError(
-                "Tao subprocess is no longer running. Make a new `SubprocessTao` "
-                "object or reinitialize with `.init()`."
-            )
-        assert self._subproc_pipe_ is not None
-        return self._subproc_pipe_.send_receive_fork_map(
+        return self._require_pipe().send_receive_fork_map(
             func,
             items,
             max_workers=resolve_max_workers(max_workers),
