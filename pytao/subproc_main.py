@@ -8,12 +8,13 @@ import signal
 import struct
 import sys
 import threading
+import traceback
 import warnings
 
 from ._shmem_compat import SharedMemory
 from .core import TaoCommandError
 from .errors import TaoForkError
-from .fork import error_result_from_exception, fork_map_payloads
+from .fork import fork_map_payloads
 from .subproc import (
     _BEAM_TRACK_SHM_FMT,
     SubprocessErrorResult,
@@ -28,6 +29,15 @@ from .tao import Tao
 from .util import import_by_name
 
 logger = logging.getLogger(__name__)
+
+
+def _error_result_from_exception(ex: BaseException) -> SubprocessErrorResult:
+    return {
+        "error": str(ex),
+        "error_cls": type(ex).__name__,
+        "traceback": traceback.format_exc(),
+        "tao_output": getattr(ex, "tao_output", ""),
+    }
 
 
 def _beam_track_writer(
@@ -174,7 +184,7 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
             }
             return success
         except Exception as ex:
-            error: SubprocessErrorResult = error_result_from_exception(ex)
+            error = _error_result_from_exception(ex)
             return error
         finally:
             if tao is not None:

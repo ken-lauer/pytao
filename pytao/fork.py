@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import logging
 import os
 import pickle
 import selectors
@@ -18,12 +17,15 @@ from .errors import TaoForkError
 if TYPE_CHECKING:
     from .tao import Tao
 
-logger = logging.getLogger(__name__)
-
 T = TypeVar("T")
 R = TypeVar("R")
 
 _READ_CHUNK = 1 << 20
+
+# Child exit codes.  A successful child sends its pickled result; a child
+# whose `func` raised sends a pickled `TaoForkError`.
+_EXIT_OK = 0
+_EXIT_RAISED = 1
 
 
 @dataclass
@@ -34,31 +36,15 @@ class _Child:
     buf: bytearray = field(default_factory=bytearray)
 
 
-def error_result_from_exception(ex: BaseException) -> dict[str, str]:
-    """Describe an exception in the same shape as `SubprocessErrorResult`."""
-    return {
-        "error": str(ex),
-        "error_cls": type(ex).__name__,
-        "traceback": traceback.format_exc(),
-        "tao_output": getattr(ex, "tao_output", ""),
-    }
-
-
-def _write_all(fd: int, data: bytes) -> None:
-    view = memoryview(data)
-    while view:
-        written = os.write(fd, view)
-        view = view[written:]
-
-
 def _child_main(
     tao: Tao,
     func: Callable,
+    index: int,
     item: Any,
     write_fd: int,
     inherited_fds: Iterable[int],
 ) -> NoReturn:
-    code = 0
+    code = _EXIT_RAISED
     try:
         # Holding siblings' read ends would keep a write to an orphaned
         # parent from failing with EPIPE.
@@ -66,18 +52,22 @@ def _child_main(
             with contextlib.suppress(OSError):
                 os.close(fd)
         try:
-            payload = pickle.dumps(
-                {"result": func(tao, item)}, protocol=pickle.HIGHEST_PROTOCOL
-            )
+            payload = pickle.dumps(func(tao, item), protocol=pickle.HIGHEST_PROTOCOL)
+            code = _EXIT_OK
         except BaseException as ex:  # noqa: BLE001
-            code = 1
-            payload = pickle.dumps(
-                error_result_from_exception(ex), protocol=pickle.HIGHEST_PROTOCOL
+            err = TaoForkError(
+                f"Item {index} raised {type(ex).__name__}: {ex}",
+                tao_output=getattr(ex, "tao_output", ""),
+                index=index,
+                error_cls=type(ex).__name__,
+                child_traceback=traceback.format_exc(),
+                exit_code=_EXIT_RAISED,
             )
-        _write_all(write_fd, payload)
-        os.close(write_fd)
-    except BaseException:  # noqa: BLE001
-        code = 2
+            if hasattr(err, "add_note"):
+                err.add_note(f"Child process {err.child_traceback}")
+            payload = pickle.dumps(err, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(write_fd, "wb") as fp:
+            fp.write(payload)
     finally:
         with contextlib.suppress(Exception):
             sys.stdout.flush()
@@ -86,65 +76,36 @@ def _child_main(
         os._exit(code)
 
 
-def _decode_child_payload(
-    index: int,
-    payload: bytes,
-    exit_code: int,
-    raises: bool,
-) -> Any:
-    err: TaoForkError | None = None
-
+def _decode_payload(index: int, payload: bytes, exit_code: int) -> Any:
+    """Unpickle a child's result, raising `TaoForkError` if it failed."""
     if exit_code < 0:
-        signum = -exit_code
         try:
-            name = signal.Signals(signum).name
+            name = signal.Signals(-exit_code).name
         except ValueError:
             name = "unknown signal"
-        err = TaoForkError(
-            f"Child process for item {index} was killed by signal {signum} ({name})",
+        raise TaoForkError(
+            f"Child process for item {index} was killed by signal {-exit_code} ({name})",
             index=index,
             exit_code=exit_code,
         )
-    elif not payload:
-        err = TaoForkError(
+    if exit_code not in (_EXIT_OK, _EXIT_RAISED) or not payload:
+        raise TaoForkError(
             f"Child process for item {index} exited with code {exit_code} "
             f"without returning a result",
             index=index,
             exit_code=exit_code,
         )
-    else:
-        try:
-            value = pickle.loads(payload)
-        except Exception as ex:  # noqa: BLE001
-            err = TaoForkError(
-                f"Could not decode the result for item {index}: {ex}",
-                index=index,
-                exit_code=exit_code,
-            )
-        else:
-            if isinstance(value, dict) and "result" in value:
-                return value["result"]
-            if isinstance(value, dict) and "error" in value:
-                err = TaoForkError(
-                    f"Item {index} raised {value.get('error_cls')}: {value.get('error')}",
-                    tao_output=value.get("tao_output", ""),
-                    index=index,
-                    error_cls=value.get("error_cls", ""),
-                    child_traceback=value.get("traceback", ""),
-                    exit_code=exit_code,
-                )
-                if hasattr(err, "add_note") and callable(err.add_note):
-                    err.add_note(f"Child process {err.child_traceback}")
-            else:
-                err = TaoForkError(
-                    f"Unexpected result payload for item {index}: {type(value).__name__}",
-                    index=index,
-                    exit_code=exit_code,
-                )
-
-    if raises:
-        raise err
-    return err
+    try:
+        value = pickle.loads(payload)
+    except Exception as ex:
+        raise TaoForkError(
+            f"Could not decode the result for item {index}: {ex}",
+            index=index,
+            exit_code=exit_code,
+        ) from ex
+    if exit_code == _EXIT_RAISED:
+        raise value
+    return value
 
 
 def resolve_max_workers(max_workers: int | None) -> int:
@@ -169,10 +130,15 @@ def decode_fork_payloads(
     raises: bool = True,
 ) -> list[Any]:
     """Decode the `(payload, exit_code)` pairs from `fork_map_payloads`."""
-    return [
-        _decode_child_payload(index, payload, exit_code, raises)
-        for index, (payload, exit_code) in enumerate(payloads)
-    ]
+    results = []
+    for index, (payload, exit_code) in enumerate(payloads):
+        try:
+            results.append(_decode_payload(index, payload, exit_code))
+        except TaoForkError as err:
+            if raises:
+                raise
+            results.append(err)
+    return results
 
 
 def fork_map(
@@ -207,10 +173,9 @@ def fork_map_payloads(
     """
     Run `fork_map`, leaving each child's pickled result undecoded.
 
-    Failed children are decoded as they finish so that `raises` still stops at
-    the first failure.  Successful payloads are returned as `(payload,
-    exit_code)` pairs for `decode_fork_payloads`, letting a caller forward them
-    without unpickling.
+    Returns `(payload, exit_code)` pairs for `decode_fork_payloads`, letting a
+    caller forward them without unpickling.  With `raises`, a failed child is
+    decoded as soon as it finishes so that the first failure stops the rest.
     """
     if not hasattr(os, "fork"):
         raise NotImplementedError("fork_map requires os.fork(), which is unavailable here")
@@ -235,7 +200,7 @@ def fork_map_payloads(
         read_fd, write_fd = os.pipe()
         pid = os.fork()
         if pid == 0:
-            _child_main(tao, func, items[index], write_fd, [read_fd, *live])
+            _child_main(tao, func, index, items[index], write_fd, [read_fd, *live])
         # The parent must drop its write end or EOF never arrives.
         os.close(write_fd)
         child = _Child(pid=pid, index=index, fd=read_fd)
@@ -269,8 +234,8 @@ def fork_map_payloads(
                 _, status = os.waitpid(child.pid, 0)
                 exit_code = os.waitstatus_to_exitcode(status)
                 payload = bytes(child.buf)
-                if raises and exit_code != 0:
-                    _decode_child_payload(child.index, payload, exit_code, raises=True)
+                if raises and exit_code != _EXIT_OK:
+                    _decode_payload(child.index, payload, exit_code)
                 results[child.index] = (payload, exit_code)
                 next_index = next(pending, None)
                 if next_index is not None:
@@ -284,8 +249,5 @@ def fork_map_payloads(
         for child in live.values():
             with contextlib.suppress(ChildProcessError):
                 os.waitpid(child.pid, 0)
-            with contextlib.suppress(Exception):
-                sel.unregister(child.fd)
             os.close(child.fd)
-        live.clear()
         sel.close()
