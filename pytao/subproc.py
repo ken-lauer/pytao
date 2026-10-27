@@ -409,9 +409,11 @@ class _TaoPipe:
         `func` and `items` are sent pickled, so that the subprocess unpickles
         them within its error handling; one it cannot unpickle mid-stream would
         otherwise kill it.  The subprocess forwards each child's pickled result
-        undecoded, so results are unpickled only here.  It returns `TaoForkError`/`TimeoutError`
-        instances in place of a result when `fork_map` raised; these are
-        re-raised here so the exception type matches the in-process `Tao.fork_map`.
+        undecoded, so results are unpickled only here.
+
+        The subprocess returns `TaoForkError`/`TimeoutError` instances in place
+        of a result when `fork_map` raised; these are re-raised here so the
+        exception type matches the in-process `Tao.fork_map`.
         """
         func_payload = _pickle_for_subprocess(func)
         items_payload = _pickle_for_subprocess(list(items))

@@ -141,26 +141,6 @@ def decode_fork_payloads(
     return results
 
 
-def fork_map(
-    tao: Tao,
-    func: Callable[[Tao, T], R],
-    items: Iterable[T],
-    *,
-    max_workers: int | None = None,
-    timeout: float | None = None,
-    raises: bool = True,
-) -> list[R | TaoForkError]:
-    """
-    Run `func(tao, item)` for each item in a forked copy of this process.
-
-    See `Tao.fork_map` for full documentation.
-    """
-    payloads = fork_map_payloads(
-        tao, func, items, max_workers=max_workers, timeout=timeout, raises=raises
-    )
-    return decode_fork_payloads(payloads, raises)
-
-
 def fork_map_payloads(
     tao: Tao,
     func: Callable[[Tao, T], R],
@@ -171,7 +151,7 @@ def fork_map_payloads(
     raises: bool = True,
 ) -> list[tuple[bytes, int]]:
     """
-    Run `fork_map`, leaving each child's pickled result undecoded.
+    Run `Tao.fork_map`, leaving each child's pickled result undecoded.
 
     Returns `(payload, exit_code)` pairs for `decode_fork_payloads`, letting a
     caller forward them without unpickling.  With `raises`, a failed child is

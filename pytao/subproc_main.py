@@ -31,15 +31,6 @@ from .util import import_by_name
 logger = logging.getLogger(__name__)
 
 
-def _error_result_from_exception(ex: BaseException) -> SubprocessErrorResult:
-    return {
-        "error": str(ex),
-        "error_cls": type(ex).__name__,
-        "traceback": traceback.format_exc(),
-        "tao_output": getattr(ex, "tao_output", ""),
-    }
-
-
 def _beam_track_writer(
     tao: Tao,
     shm: SharedMemory,
@@ -182,7 +173,12 @@ def _tao_subprocess(output_fifo_filename: str, beam_track_shm_name: str) -> None
             }
             return success
         except Exception as ex:
-            error = _error_result_from_exception(ex)
+            error: SubprocessErrorResult = {
+                "error": str(ex),
+                "error_cls": type(ex).__name__,
+                "traceback": traceback.format_exc(),
+                "tao_output": getattr(ex, "tao_output", ""),
+            }
             return error
         finally:
             if tao is not None:
